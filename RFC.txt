@@ -1,0 +1,761 @@
+
+
+
+
+
+                         LLM Context Pack (LCP)
+          A Binary Serialization Format for Structured LLM Context
+
+                           RFC Draft v0.1.0
+
+
+Status of This Memo
+
+   This document specifies an early-stage protocol for encoding
+   structured context for large language model consumption.
+   Distribution of this memo is unlimited.
+
+   This is a working draft and is subject to significant revision.
+
+Document Information
+
+   Version:    0.1.0-draft
+   Status:     Early Draft / Request for Comments
+   Date:       February 2026
+   Author:     Nick Galante <rustycloud42@protonmail.com>,
+			    <c-nicholas.galante@charter.com>
+   License:    TBD (Apache 2.0 / MIT recommended)
+
+
+Table of Contents
+
+   1.  Abstract ...................................................  2
+   2.  Problem Statement ..........................................  2
+       2.1.  The Context Window Tax ...............................  2
+       2.2.  No Shared Structure ..................................  3
+       2.3.  The Compression Opportunity ..........................  3
+   3.  Design Goals ...............................................  4
+   4.  Format Specification .......................................  5
+       4.1.  Overview .............................................  5
+       4.2.  File Header ..........................................  5
+       4.3.  Block Structure ......................................  6
+       4.4.  Block Types ..........................................  6
+       4.5.  String Encoding ......................................  8
+       4.6.  Compression ..........................................  8
+       4.7.  Content Addressing ...................................  8
+   5.  Driver API Specification ...................................  9
+       5.1.  Overview .............................................  9
+       5.2.  Core Interface .......................................  9
+       5.3.  Decode Configuration .................................  9
+       5.4.  Output Format Modes .................................. 10
+       5.5.  Token Budget Engine .................................. 10
+       5.6.  Encoder API .......................................... 11
+   6.  Token Efficiency Analysis .................................. 12
+   7.  Progressive Detail and Attention Hints ..................... 13
+       7.1.  Summary Blocks ....................................... 13
+       7.2.  Attention Annotations ................................ 13
+   8.  Future: Native Binary Ingestion ............................ 14
+       8.1.  Vision ............................................... 14
+       8.2.  Design Decisions That Enable This .................... 14
+       8.3.  Research Required .................................... 14
+   9.  Implementation Roadmap ..................................... 15
+   10. Comparison with Existing Formats ........................... 16
+   11. Open Questions ............................................. 17
+   12. Appendix: Example Encode/Decode ............................ 18
+
+
+1.  Abstract
+
+   LLM Context Pack (LCP) is a binary serialization format designed
+   to efficiently encode structured context for consumption by large
+   language models.  Where Protocol Buffers optimize for machine-to-
+   machine RPC and MessagePack optimizes for general-purpose
+   serialization, LCP optimizes for a fundamentally different target:
+   maximizing semantic density within a token-constrained context
+   window.
+
+   The format defines a block-based container with typed semantic
+   regions (code, conversation, file trees, tool output, metadata)
+   and a standard driver API for decoding these blocks into token-
+   efficient textual representations.  In its initial phase, LCP
+   operates as a transport and storage optimization with a
+   deterministic decode step.  The wire format is explicitly designed
+   to support a future phase where model providers may train native
+   binary token vocabularies, enabling direct ingestion without a
+   text decode step.
+
+
+2.  Problem Statement
+
+2.1.  The Context Window Tax
+
+   Current approaches to providing context to LLMs are profoundly
+   wasteful.  Consider the typical workflow of an AI coding
+   assistant:
+
+      1. A developer asks the agent to fix a bug in a service.
+
+      2. The agent reads 15 source files, each with full file paths,
+         language headers, and markdown code fences.
+
+      3. Previous conversation turns are included verbatim, including
+         redundant system prompts and tool-call JSON.
+
+      4. Tool results (LSP diagnostics, test output, search results)
+         arrive as unstructured text blobs.
+
+   The resulting context window is filled with structural overhead:
+   repeated markdown delimiters, redundant path prefixes, verbose
+   JSON envelopes, and duplicated content across turns.  In practice,
+   30-50% of tokens in a typical agent context window are structural,
+   not semantic.
+
+2.2.  No Shared Structure
+
+   Every tool, agent framework, and model provider has its own ad-hoc
+   approach to context formatting.  MCP returns JSON-RPC envelopes.
+   Claude Code uses XML tags.  ChatGPT function calls use JSON
+   schemas.  Cursor uses its own internal format.  There is no shared
+   intermediate representation that these systems can target, which
+   means:
+
+      o  Context cannot be cached or pre-computed across tools.
+
+      o  Tools cannot signal the semantic type of their output (is
+         this a code diff? a conversation? a search result?).
+
+      o  Models cannot receive hints about what to pay attention to
+         or skip.
+
+      o  There is no mechanism for progressive detail (summary first,
+         full content on demand).
+
+2.3.  The Compression Opportunity
+
+   LLMs do not need human-readable markdown.  They need semantic
+   structure.  A code block does not need triple backticks, a
+   language identifier string, and a trailing fence -- it needs a
+   type tag that says "this is Rust code" and the raw content.  A
+   conversation turn does not need "### User:\n\n" -- it needs a role
+   byte and the message body.  This structural overhead is the
+   compression opportunity LCP targets.
+
+
+3.  Design Goals
+
+   +----------+-------------------------+----------------------------+
+   | Priority | Goal                    | Description                |
+   +----------+-------------------------+----------------------------+
+   | P0       | Token Efficiency        | Decoded output MUST use    |
+   |          |                         | fewer tokens than          |
+   |          |                         | equivalent raw markdown    |
+   |          |                         | for the same semantic      |
+   |          |                         | content.                   |
+   +----------+-------------------------+----------------------------+
+   | P0       | Semantic Preservation   | The decode step MUST       |
+   |          |                         | produce output that models |
+   |          |                         | understand at least as     |
+   |          |                         | well as hand-written       |
+   |          |                         | markdown.                  |
+   +----------+-------------------------+----------------------------+
+   | P0       | Streaming Decode        | The format MUST support    |
+   |          |                         | streaming / incremental    |
+   |          |                         | decode without buffering   |
+   |          |                         | the entire payload.        |
+   +----------+-------------------------+----------------------------+
+   | P1       | Tool Agnostic           | Any tool, agent, or        |
+   |          |                         | framework SHOULD be able   |
+   |          |                         | to produce LCP blobs       |
+   |          |                         | without knowing the        |
+   |          |                         | consuming model.           |
+   +----------+-------------------------+----------------------------+
+   | P1       | Schema Evolution        | New block types and fields |
+   |          |                         | can be added without       |
+   |          |                         | breaking existing decoders |
+   |          |                         | (forward compatibility).   |
+   +----------+-------------------------+----------------------------+
+   | P1       | Progressive Detail      | Blocks can carry both a    |
+   |          |                         | summary and full content,  |
+   |          |                         | letting the driver choose  |
+   |          |                         | based on budget.           |
+   +----------+-------------------------+----------------------------+
+   | P2       | Native Ingestion Path   | The wire format SHOULD be  |
+   |          |                         | structured enough that a   |
+   |          |                         | model could learn to       |
+   |          |                         | consume it directly.       |
+   +----------+-------------------------+----------------------------+
+   | P2       | Cross-Language SDKs     | Reference implementations  |
+   |          |                         | in Rust and TypeScript;    |
+   |          |                         | portable to other langs.   |
+   +----------+-------------------------+----------------------------+
+
+
+4.  Format Specification
+
+4.1.  Overview
+
+   An LCP payload is a sequence of length-prefixed, typed blocks
+   preceded by a file header.  The format uses little-endian byte
+   order and varint encoding (LEB128) for variable-length integers,
+   following the same conventions as Protocol Buffers for
+   familiarity.
+
+4.2.  File Header
+
+   Every LCP payload begins with a fixed 8-byte header:
+
+   +--------+---------+----------------------------------------------+
+   | Offset | Size    | Description                                  |
+   +--------+---------+----------------------------------------------+
+   | 0x00   | 4 bytes | Magic number: 0x4C435000 (ASCII "LCP\0")     |
+   +--------+---------+----------------------------------------------+
+   | 0x04   | 1 byte  | Format version (major). Current: 1.          |
+   +--------+---------+----------------------------------------------+
+   | 0x05   | 1 byte  | Format version (minor). Current: 0.          |
+   +--------+---------+----------------------------------------------+
+   | 0x06   | 1 byte  | Flags (bitfield):                            |
+   |        |         |   bit 0 = compressed                         |
+   |        |         |   bit 1 = has index trailer                  |
+   |        |         |   bits 2-7 = reserved                        |
+   +--------+---------+----------------------------------------------+
+   | 0x07   | 1 byte  | Reserved (MUST be 0x00).                     |
+   +--------+---------+----------------------------------------------+
+
+4.3.  Block Structure
+
+   After the header, the payload is a concatenated sequence of
+   blocks.  Each block has the following layout:
+
+       0                   1                   2
+       0 1 2 3 4 5 6 7 8 9 0 1 2 3 4 5 6 7 8 9 0 1 2 3
+      +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+      |  block_type (varint)  |  block_flags (uint8)  |
+      +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+      |  content_len (varint, byte length of body)    |
+      +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+      |                                               |
+      |              body [content_len bytes]          |
+      |                                               |
+      +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+
+   block_flags is a bitfield:
+
+      o  bit 0 = has summary sub-block
+      o  bit 1 = body is compressed (zstd)
+      o  bit 2 = block is a reference (body contains a content-
+                 addressed hash, not inline data)
+      o  bits 3-7 = reserved
+
+4.4.  Block Types
+
+   Each block type defines a semantic category.  The body encoding is
+   type-specific but follows common patterns (nested key-value fields
+   using varint field IDs, similar to protobuf).
+
+   +------+------------------+----------------------------------------+
+   | ID   | Type             | Description                            |
+   +------+------------------+----------------------------------------+
+   | 0x01 | CODE             | Source code.                           |
+   |      |                  | Fields: language (enum), path          |
+   |      |                  | (string), content (bytes),             |
+   |      |                  | line_range (optional).                 |
+   +------+------------------+----------------------------------------+
+   | 0x02 | CONVERSATION     | Chat turn.                             |
+   |      |                  | Fields: role (enum: system/user/       |
+   |      |                  | assistant/tool), content (bytes),      |
+   |      |                  | tool_call_id (optional).               |
+   +------+------------------+----------------------------------------+
+   | 0x03 | FILE_TREE        | Directory structure.                   |
+   |      |                  | Fields: root_path (string), entries    |
+   |      |                  | (nested: name, type, size, children).  |
+   +------+------------------+----------------------------------------+
+   | 0x04 | TOOL_RESULT      | Tool/MCP output.                       |
+   |      |                  | Fields: tool_name (string), status     |
+   |      |                  | (enum), content (bytes),               |
+   |      |                  | schema_hint (optional).                |
+   +------+------------------+----------------------------------------+
+   | 0x05 | DOCUMENT         | Prose/markdown content.                |
+   |      |                  | Fields: title (string), content        |
+   |      |                  | (bytes), format_hint (enum:            |
+   |      |                  | md/plain/html).                        |
+   +------+------------------+----------------------------------------+
+   | 0x06 | STRUCTURED_DATA  | Tables, JSON, configs.                 |
+   |      |                  | Fields: format (enum: json/yaml/       |
+   |      |                  | toml/csv), schema (optional),          |
+   |      |                  | content (bytes).                       |
+   +------+------------------+----------------------------------------+
+   | 0x07 | DIFF             | Code changes.                          |
+   |      |                  | Fields: path (string), hunks           |
+   |      |                  | (nested: old_start, new_start,         |
+   |      |                  | lines).                                |
+   +------+------------------+----------------------------------------+
+   | 0x08 | ANNOTATION       | Metadata overlay.                      |
+   |      |                  | Fields: target_block_id (varint),      |
+   |      |                  | kind (enum: priority/summary/tag),     |
+   |      |                  | value (bytes).                         |
+   +------+------------------+----------------------------------------+
+   | 0x09 | EMBEDDING_REF    | Vector reference.                      |
+   |      |                  | Fields: vector_id (bytes),             |
+   |      |                  | source_hash (bytes), model (string).   |
+   |      |                  | Future: direct embed.                  |
+   +------+------------------+----------------------------------------+
+   | 0x0A | IMAGE            | Image reference/embed.                 |
+   |      |                  | Fields: media_type (enum), alt_text    |
+   |      |                  | (string), data (bytes or URI).         |
+   +------+------------------+----------------------------------------+
+   | 0xFE | EXTENSION        | User-defined block.                    |
+   |      |                  | Fields: namespace (string),            |
+   |      |                  | type_name (string), content (bytes).   |
+   +------+------------------+----------------------------------------+
+   | 0xFF | END              | Sentinel. Signals end of block stream. |
+   |      |                  | Body is empty.                         |
+   +------+------------------+----------------------------------------+
+
+4.5.  String Encoding
+
+   All strings are UTF-8, length-prefixed with a varint byte count.
+   There is no null termination.  Language enums and other small
+   enumerations use single-byte values with a registry defined in the
+   specification appendix.
+
+4.6.  Compression
+
+   When the compressed flag is set (either in the file header for
+   whole-payload compression or in a block's flags for per-block
+   compression), the body uses Zstandard (zstd) compression.  Zstd
+   is chosen for its excellent ratio-to-speed tradeoff and its
+   support for dictionary-based compression, which is particularly
+   effective for repetitive code context.  A future version MAY
+   define shared dictionaries optimized for common programming
+   languages.
+
+4.7.  Content Addressing
+
+   When a block's reference flag is set, the body contains a BLAKE3
+   hash (32 bytes) instead of inline content.  This enables
+   deduplication across context packs: if the same file appears in
+   multiple tool results, it is stored once and referenced by hash.
+   The driver resolves references against a content store (local or
+   remote) at decode time.
+
+
+5.  Driver API Specification
+
+5.1.  Overview
+
+   The LCP driver is the layer between the binary format and the
+   LLM's token input.  It reads an LCP payload and emits a token-
+   efficient textual representation.  The driver is not a simple
+   deserializer -- it is an opinionated renderer that makes decisions
+   about how to present context to maximize model comprehension
+   within a token budget.
+
+5.2.  Core Interface
+
+   The driver exposes the following primary interface (shown in Rust-
+   style pseudocode):
+
+      trait LcpDriver {
+          /// Decode an LCP payload into model-ready text.
+          fn decode(
+              &self,
+              payload: &[u8],
+              config: DecodeConfig,
+          ) -> Result<DecodedContext, LcpError>;
+
+          /// Streaming variant: yields text chunks as blocks
+          /// are decoded.
+          fn decode_stream(
+              &self,
+              reader: impl AsyncRead,
+              config: DecodeConfig,
+          ) -> impl Stream<Item = Result<TextChunk, LcpError>>;
+      }
+
+5.3.  Decode Configuration
+
+      struct DecodeConfig {
+          /// Approximate token budget. Driver will use summaries
+          /// for low-priority blocks when over budget.
+          token_budget: Option<u32>,
+
+          /// Verbosity: Full, Summary, or Adaptive (auto-select).
+          verbosity: Verbosity,
+
+          /// Model family hint (affects output formatting).
+          target_model: Option<ModelFamily>,
+
+          /// Block type filter: only decode these types.
+          include_types: Option<Vec<BlockType>>,
+
+          /// Content resolver for reference blocks.
+          content_store: Option<Arc<dyn ContentStore>>,
+      }
+
+5.4.  Output Format Modes
+
+   The driver supports multiple output format modes to accommodate
+   different model families and their conventions:
+
+      o  XML-tagged mode:  Emits <code lang="rust" path="src/
+         main.rs">...</code> style blocks.  Optimized for Claude-
+         family models which have strong XML comprehension.
+
+      o  Markdown mode:  Emits conventional markdown with fenced code
+         blocks and headers.  Compatible with all models but less
+         token-efficient.
+
+      o  Minimal mode:  Emits minimal delimiters (e.g., single-line
+         markers like "--- src/main.rs [rust] ---").  Maximum token
+         efficiency for models that handle it well.
+
+      o  Raw mode:  Emits the binary blocks as tagged byte sequences
+         with base-encoding.  Intended for future native-ingestion
+         experimentation.
+
+5.5.  Token Budget Engine
+
+   When a token budget is specified, the driver performs a two-pass
+   decode:
+
+      1. Scan pass:  Read all block headers and summaries (if
+         present).  Estimate token counts per block.
+
+      2. Budget pass:  Rank blocks by a priority heuristic
+         (annotations can override).  For blocks that exceed the
+         remaining budget, emit summaries instead of full content.
+         If no summary is available, emit a placeholder with
+         metadata (type, path, size).
+
+   This enables a graceful degradation pattern: the model always sees
+   a complete picture of what context is available, even if some
+   blocks are summarized.
+
+5.6.  Encoder API
+
+   The companion encoder API allows tools to produce LCP payloads:
+
+      trait LcpEncoder {
+          fn new() -> Self;
+
+          fn add_code(
+              &mut self, lang: Lang, path: &str, content: &str,
+          ) -> &mut Self;
+
+          fn add_conversation(
+              &mut self, role: Role, content: &str,
+          ) -> &mut Self;
+
+          fn add_file_tree(
+              &mut self, root: &str, entries: Vec<FileEntry>,
+          ) -> &mut Self;
+
+          fn add_tool_result(
+              &mut self, name: &str, status: Status, content: &str,
+          ) -> &mut Self;
+
+          /// Attach a summary to the last added block.
+          fn with_summary(&mut self, summary: &str) -> &mut Self;
+
+          /// Attach a priority annotation to the last added block.
+          fn with_priority(&mut self, p: Priority) -> &mut Self;
+
+          fn encode(&self) -> Result<Vec<u8>, LcpError>;
+
+          fn encode_stream(
+              &self,
+          ) -> impl Stream<Item = Result<Bytes, LcpError>>;
+      }
+
+
+6.  Token Efficiency Analysis
+
+6.1.  Theoretical Overhead Reduction
+
+   The following table compares token overhead for common context
+   patterns between raw markdown and LCP's minimal decode mode
+   (estimates based on cl100k_base tokenizer):
+
+   +----------------------------+-----------+-----------+---------+
+   | Context Pattern            | Markdown  | LCP Min.  | Savings |
+   |                            | Tokens    | Tokens    |         |
+   +----------------------------+-----------+-----------+---------+
+   | Code block (50-line Rust)  | ~18 ovhd  | ~6 ovhd   | ~67%    |
+   +----------------------------+-----------+-----------+---------+
+   | Conversation turn          | ~8 ovhd   | ~3 ovhd   | ~63%    |
+   +----------------------------+-----------+-----------+---------+
+   | File tree (20 entries)     | ~60 total | ~35 total | ~42%    |
+   +----------------------------+-----------+-----------+---------+
+   | Tool result w/ JSON env.   | ~40 ovhd  | ~8 ovhd   | ~80%    |
+   +----------------------------+-----------+-----------+---------+
+   | 10 files, shared prefix    | ~50 path  | ~15 path  | ~70%    |
+   +----------------------------+-----------+-----------+---------+
+
+   Note: These are preliminary estimates for structural overhead
+   only.  Actual content tokens are unchanged.  The savings compound:
+   a typical 100K-token agent context with 35% structural overhead
+   could recover ~15,000-25,000 tokens, equivalent to 3-5 additional
+   source files.
+
+
+7.  Progressive Detail and Attention Hints
+
+7.1.  Summary Blocks
+
+   Any block MAY carry an optional summary sub-block (indicated by
+   bit 0 of block_flags).  The summary is a compact textual
+   description of the block's content, suitable for giving the model
+   awareness of the block without paying the full token cost.
+
+   For example, a CODE block for a 500-line file might have a
+   summary: "Database connection pool implementation with retry
+   logic, max connections config, and health check endpoint."  This
+   costs ~20 tokens versus ~800 for the full file.
+
+7.2.  Attention Annotations
+
+   ANNOTATION blocks with kind=priority allow tools to signal which
+   context is most relevant to the current task.  The driver uses
+   these hints during budget allocation:
+
+      o  CRITICAL:    Always include full content, even if over
+                      budget.
+
+      o  HIGH:        Prefer full content; summarize only under
+                      extreme budget pressure.
+
+      o  NORMAL:      Default.  Summarize if needed to fit budget.
+
+      o  LOW:         Summarize aggressively or omit with a
+                      reference stub.
+
+      o  BACKGROUND:  Include only as a one-line reference unless
+                      explicitly requested.
+
+
+8.  Future: Native Binary Ingestion
+
+8.1.  Vision
+
+   The long-term goal of LCP is to eliminate the text decode step
+   entirely.  If model providers adopt a shared understanding of the
+   LCP wire format, blocks could be tokenized directly from binary
+   into a purpose-built token vocabulary.  A CODE block would not be
+   rendered as text and then re-tokenized -- it would be consumed as
+   a structured token sequence that the model has learned to
+   interpret natively.
+
+8.2.  Design Decisions That Enable This
+
+   Several design choices in the v1 wire format are specifically
+   motivated by this future:
+
+      o  Block types use small integer IDs, not strings, so they map
+         naturally to special tokens.
+
+      o  Field IDs within blocks are varint-tagged, not named,
+         reducing the gap between wire format and a learned binary
+         vocabulary.
+
+      o  The format avoids context-dependent encoding: every block is
+         self-contained and can be tokenized independently.
+
+      o  Content addressing means the model could learn to resolve
+         references, similar to how it handles tool-use today.
+
+8.3.  Research Required
+
+   Native ingestion requires significant research collaboration with
+   model providers.  Open questions include: whether fine-tuning is
+   sufficient or pretraining is required; what the minimum training
+   data volume is; how to handle schema evolution in a learned
+   vocabulary; and whether a hybrid approach (binary structure tokens
+   + text content tokens) outperforms fully text-based or fully
+   binary approaches.
+
+
+9.  Implementation Roadmap
+
+9.1.  Phase 1: Specification and Reference Implementation
+
+      o  Finalize the v1 wire format specification with a formal
+         grammar.
+
+      o  Build a reference encoder/decoder in Rust (lcp-core crate).
+
+      o  Build TypeScript bindings (lcp-ts, targeting Bun runtime).
+
+      o  Publish a test suite with golden files for cross-language
+         conformance.
+
+      o  Benchmark token efficiency against raw markdown for
+         representative context payloads.
+
+9.2.  Phase 2: Driver and Tooling Integration
+
+      o  Implement the driver with XML-tagged, Markdown, and Minimal
+         output modes.
+
+      o  Build an MCP server adapter: automatically wraps MCP tool
+         results in LCP blocks.
+
+      o  Build a CLI tool for inspecting, validating, and converting
+         LCP files.
+
+      o  Develop a VS Code extension for visualizing LCP payloads.
+
+9.3.  Phase 3: Ecosystem and Native Path
+
+      o  Propose LCP as a content-type option in the MCP
+         specification.
+
+      o  Collaborate with model providers on native ingestion
+         experiments.
+
+      o  Develop shared compression dictionaries for common
+         languages.
+
+      o  Build caching infrastructure (content-addressed block
+         store).
+
+
+10. Comparison with Existing Formats
+
+   +------------------+-----+--------+--------+-------+--------+
+   |                  | LCP | Proto- | Msg-   | MCP   | Raw    |
+   |                  |     | buf    | Pack   | JSON  | MD     |
+   +------------------+-----+--------+--------+-------+--------+
+   | LLM-optimized    | Yes | No     | No     | Part. | No     |
+   +------------------+-----+--------+--------+-------+--------+
+   | Semantic types   | Yes | Schema | No     | Part. | No     |
+   +------------------+-----+--------+--------+-------+--------+
+   | Token budget     | Yes | No     | No     | No    | No     |
+   +------------------+-----+--------+--------+-------+--------+
+   | Progressive      | Yes | No     | No     | No    | No     |
+   +------------------+-----+--------+--------+-------+--------+
+   | Streaming        | Yes | Yes    | Yes    | SSE   | N/A    |
+   +------------------+-----+--------+--------+-------+--------+
+   | Compression      |Zstd | No     | No     | No    | No     |
+   +------------------+-----+--------+--------+-------+--------+
+   | Content dedup    |BLK3 | No     | No     | No    | No     |
+   +------------------+-----+--------+--------+-------+--------+
+   | Native path      | Yes | No     | No     | No    | No     |
+   +------------------+-----+--------+--------+-------+--------+
+
+
+11. Open Questions
+
+   The following questions remain open for discussion and are
+   explicitly called out as areas where community input is requested:
+
+      1. Tokenizer awareness:  Should the driver be tokenizer-aware?
+         If it knows the target tokenizer, it can make more precise
+         budget decisions.  The tradeoff is coupling to specific
+         model families.
+
+      2. Block ordering semantics:  Should block order be
+         significant?  Placing high-priority blocks first may improve
+         model attention, but imposes constraints on encoders.
+
+      3. Nested blocks:  Should blocks be nestable (e.g., a
+         CONVERSATION block containing CODE blocks)?  Adds
+         complexity but models real-world structure.
+
+      4. Versioning strategy:  How aggressively should we version?
+         Protobuf-style "unknown fields are preserved" vs strict
+         version checking.
+
+      5. Extension registry:  Should there be a central registry for
+         EXTENSION block namespaces, or should it be convention-
+         based?
+
+      6. Image and multimodal content:  How should binary content
+         (images, audio) be handled?  Inline base64 in the text
+         decode, or out-of-band with a reference?
+
+      7. Encryption and access control:  Should LCP support encrypted
+         blocks for sensitive context (API keys, PII)?  Or is this
+         an application-layer concern?
+
+      8. WASM driver:  Should the Rust reference implementation
+         compile to WASM for universal browser/edge runtime support?
+
+
+12. Appendix: Example Encode/Decode
+
+12.1.  Encoding Example (Pseudocode)
+
+      let mut enc = LcpEncoder::new();
+
+      enc.add_code(
+              Lang::Rust,
+              "src/main.rs",
+              &fs::read_to_string("src/main.rs")?,
+          )
+          .with_summary(
+              "Entry point: CLI arg parsing, config loading, \
+               server startup.",
+          )
+          .with_priority(Priority::High);
+
+      enc.add_tool_result("ripgrep", Status::Ok, &search_results)
+          .with_summary(
+              "3 matches for 'ConnectionPool' across 2 files.",
+          );
+
+      enc.add_conversation(
+          Role::User,
+          "Fix the connection timeout bug.",
+      );
+      enc.add_conversation(
+          Role::Assistant,
+          "I'll examine the pool config...",
+      );
+
+      let payload: Vec<u8> = enc.encode()?;
+      // payload is ~40% smaller than equivalent markdown
+
+12.2.  Decoding Example (Pseudocode)
+
+      let driver = LcpDriver::new();
+      let config = DecodeConfig {
+          token_budget: Some(8000),
+          verbosity: Verbosity::Adaptive,
+          target_model: Some(ModelFamily::Claude),
+          ..Default::default()
+      };
+
+      let decoded = driver.decode(&payload, config)?;
+      // decoded.text is model-ready, ~8000 tokens,
+      // with full content for high-priority blocks
+      // and summaries for lower-priority ones.
+
+12.3.  Decoded Output (XML-tagged mode)
+
+      <context>
+      <code lang="rust" path="src/main.rs" priority="high">
+      fn main() {
+          let config = Config::load()?;
+          // ... full file content ...
+      }
+      </code>
+
+      <tool name="ripgrep" status="ok">
+      3 matches for 'ConnectionPool' across 2 files.
+      </tool>
+
+      <turn role="user">Fix the connection timeout bug.</turn>
+      <turn role="assistant">
+      I'll examine the pool config...
+      </turn>
+      </context>
+
+
+Authors' Address
+
+   Nick Galante
+   Email: [rustycloud42@protonmail.com, c-nicholas.galante@charter.com]
+
+
+                         --- End of RFC Draft ---
+
