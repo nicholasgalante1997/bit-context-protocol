@@ -1,0 +1,10 @@
+[package]
+name = "bcp-types"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+bcp-wire = { path = "../bcp-wire" }
+thiserror = { workspace = true }
+
+[dev-dependencies]

@@ -1,6 +1,22 @@
-[package]
-name = "bit-context-protocol"
-version = "0.1.0"
-edition = "2024"
+# /Cargo.toml (workspace root)
+[workspace]
+members = [
+    "crates/bcp-wire",
+    "crates/bcp-types",
+    # "crates/lcp-encoder",
+    # "crates/lcp-decoder",
+    # "crates/lcp-driver",
+    # "crates/lcp-cli",
+]
+resolver = "2"  # Always use resolver 2 (default in 2024 edition but explicit is good)
 
-[dependencies]
+# This is the equivalent of hoisting shared deps in package.json
+[workspace.dependencies]
+thiserror = "2"
+anyhow = "1"
+zstd = "0.13"
+blake3 = "1"
+clap = { version = "4", features = ["derive"] }
+tokio = { version = "1", features = ["full"] }
+bytes = "1"
+insta = "1"
