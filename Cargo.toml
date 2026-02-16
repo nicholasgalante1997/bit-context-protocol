@@ -4,6 +4,7 @@ members = [
     "crates/bcp-wire",
     "crates/bcp-types",
     "crates/bcp-encoder",
+    "crates/bcp-decoder",
     # "crates/lcp-encoder",
     # "crates/lcp-decoder",
     # "crates/lcp-driver",

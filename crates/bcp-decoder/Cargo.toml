@@ -1,0 +1,13 @@
+[package]
+name = "bcp-decoder"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+bcp-wire = { path = "../bcp-wire" }
+bcp-types = { path = "../bcp-types" }
+thiserror = { workspace = true }
+tokio = { workspace = true }
+
+[dev-dependencies]
+bcp-encoder = { path = "../bcp-encoder" }
