@@ -1,11 +1,15 @@
+use std::sync::Arc;
+
 use bcp_types::block::{Block, BlockContent};
 use bcp_types::block_type::BlockType;
+use bcp_types::content_store::ContentStore;
 use bcp_types::summary::Summary;
-use bcp_wire::block_frame::BlockFlags;
+use bcp_wire::block_frame::{BlockFlags, BlockFrame};
 use bcp_wire::header::{HEADER_SIZE, LcpHeader};
 use bcp_wire::varint::decode_varint;
 use tokio::io::{AsyncRead, AsyncReadExt};
 
+use crate::decompression::{self, MAX_BLOCK_DECOMPRESSED_SIZE, MAX_PAYLOAD_DECOMPRESSED_SIZE};
 use crate::error::DecodeError;
 
 /// Events emitted by the streaming decoder.
@@ -44,6 +48,18 @@ pub enum DecoderEvent {
 /// incrementally from any `AsyncRead` source (files, TCP sockets,
 /// HTTP response bodies, etc.).
 ///
+/// # Whole-payload compression
+///
+/// When the header's `COMPRESSED` flag is set, the decoder must buffer
+/// all remaining bytes, decompress them, then parse blocks from the
+/// decompressed buffer. This is a documented tradeoff — whole-payload
+/// compression trades streaming capability for better compression ratio.
+///
+/// # Content store
+///
+/// To decode payloads with `IS_REFERENCE` blocks, provide a content
+/// store via [`with_content_store`](Self::with_content_store).
+///
 /// # Example
 ///
 /// ```rust,no_run
@@ -64,6 +80,14 @@ pub struct StreamingDecoder<R> {
     /// before being parsed. The buffer is reused across blocks to
     /// avoid repeated allocations.
     buf: Vec<u8>,
+    /// When whole-payload compression is detected, the entire stream
+    /// is read and decompressed into this buffer. Subsequent block
+    /// reads consume from here instead of the original reader.
+    decompressed_payload: Option<Vec<u8>>,
+    /// Read cursor into `decompressed_payload`.
+    decompressed_cursor: usize,
+    /// Optional content store for resolving `IS_REFERENCE` blocks.
+    content_store: Option<Arc<dyn ContentStore>>,
 }
 
 /// Internal state machine for the streaming decoder.
@@ -95,7 +119,20 @@ impl<R: AsyncRead + Unpin> StreamingDecoder<R> {
             reader,
             state: StreamState::ReadHeader,
             buf: Vec::with_capacity(4096),
+            decompressed_payload: None,
+            decompressed_cursor: 0,
+            content_store: None,
         }
+    }
+
+    /// Attach a content store for resolving `IS_REFERENCE` blocks.
+    ///
+    /// When a block has the `IS_REFERENCE` flag set, its 32-byte body
+    /// is looked up in this store to retrieve the original content.
+    #[must_use]
+    pub fn with_content_store(mut self, store: Arc<dyn ContentStore>) -> Self {
+        self.content_store = Some(store);
+        self
     }
 
     /// Read the next event from the stream.
@@ -115,6 +152,11 @@ impl<R: AsyncRead + Unpin> StreamingDecoder<R> {
     }
 
     /// Read and validate the 8-byte file header.
+    ///
+    /// If the header's `COMPRESSED` flag is set, the decoder reads
+    /// all remaining bytes from the stream, decompresses them with
+    /// zstd, and stores the result internally. Subsequent block reads
+    /// consume from the decompressed buffer.
     async fn read_header(&mut self) -> Result<DecoderEvent, DecodeError> {
         let mut header_buf = [0u8; HEADER_SIZE];
         self.reader.read_exact(&mut header_buf).await.map_err(|_| {
@@ -123,15 +165,67 @@ impl<R: AsyncRead + Unpin> StreamingDecoder<R> {
 
         let header = LcpHeader::read_from(&header_buf).map_err(DecodeError::InvalidHeader)?;
 
+        // Whole-payload decompression: buffer everything, decompress.
+        if header.flags.is_compressed() {
+            let mut compressed = Vec::new();
+            self.reader
+                .read_to_end(&mut compressed)
+                .await
+                .map_err(DecodeError::Io)?;
+            let decompressed =
+                decompression::decompress(&compressed, MAX_PAYLOAD_DECOMPRESSED_SIZE)?;
+            self.decompressed_payload = Some(decompressed);
+            self.decompressed_cursor = 0;
+        }
+
         self.state = StreamState::ReadBlocks;
         Ok(DecoderEvent::Header(header))
     }
 
     /// Read the next block frame from the stream.
     ///
+    /// If a decompressed payload buffer exists (whole-payload mode),
+    /// reads from that buffer. Otherwise reads from the async reader.
+    ///
+    /// Per-block decompression and reference resolution are applied
+    /// transparently.
+    ///
     /// Returns `None` when the END sentinel is encountered, transitioning
     /// the state to `Done`.
     async fn read_next_block(&mut self) -> Option<Result<DecoderEvent, DecodeError>> {
+        // If we have a decompressed payload buffer, parse from it
+        // using BlockFrame::read_from (synchronous path).
+        if let Some(ref payload) = self.decompressed_payload {
+            if self.decompressed_cursor >= payload.len() {
+                self.state = StreamState::Done;
+                return Some(Err(DecodeError::MissingEndSentinel));
+            }
+
+            let remaining = &payload[self.decompressed_cursor..];
+            match BlockFrame::read_from(remaining) {
+                Ok(Some((frame, consumed))) => {
+                    self.decompressed_cursor += consumed;
+                    Some(self.decode_frame(&frame))
+                }
+                Ok(None) => {
+                    // END sentinel — compute its size and advance cursor.
+                    // END = varint(0xFF) + flags(1 byte) + varint(0x00)
+                    match end_sentinel_size(remaining) {
+                        Ok(size) => self.decompressed_cursor += size,
+                        Err(e) => return Some(Err(e)),
+                    }
+                    self.state = StreamState::Done;
+                    None
+                }
+                Err(e) => Some(Err(DecodeError::from(e))),
+            }
+        } else {
+            self.read_next_block_from_reader().await
+        }
+    }
+
+    /// Read the next block frame from the async reader (non-buffered path).
+    async fn read_next_block_from_reader(&mut self) -> Option<Result<DecoderEvent, DecodeError>> {
         // Read block_type varint
         let block_type_raw = match self.read_varint().await {
             Ok(v) => v,
@@ -143,7 +237,6 @@ impl<R: AsyncRead + Unpin> StreamingDecoder<R> {
 
         // Check for END sentinel
         if block_type_byte == 0xFF {
-            // Read and discard flags + content_len for the END frame
             match self.read_end_frame_tail().await {
                 Ok(()) => {}
                 Err(e) => return Some(Err(e)),
@@ -173,32 +266,75 @@ impl<R: AsyncRead + Unpin> StreamingDecoder<R> {
             return Some(Err(DecodeError::Io(e)));
         }
 
-        // Decode the block
-        let block_type = BlockType::from_wire_id(block_type_byte);
-        let mut body = self.buf.as_slice();
+        let frame = bcp_wire::block_frame::BlockFrame {
+            block_type: block_type_byte,
+            flags,
+            body: self.buf[..content_len].to_vec(),
+        };
+
+        Some(self.decode_frame(&frame))
+    }
+
+    /// Decode a `BlockFrame` into a `DecoderEvent::Block`.
+    ///
+    /// Handles reference resolution, decompression, summary extraction,
+    /// and body deserialization.
+    fn decode_frame(
+        &self,
+        frame: &bcp_wire::block_frame::BlockFrame,
+    ) -> Result<DecoderEvent, DecodeError> {
+        let block_type = BlockType::from_wire_id(frame.block_type);
+
+        // Stage 1: Resolve content-addressed references.
+        let resolved_body = if frame.flags.is_reference() {
+            let store = self
+                .content_store
+                .as_ref()
+                .ok_or(DecodeError::MissingContentStore)?;
+            if frame.body.len() != 32 {
+                return Err(DecodeError::Wire(bcp_wire::WireError::UnexpectedEof {
+                    offset: frame.body.len(),
+                }));
+            }
+            let hash: [u8; 32] = frame.body[..32]
+                .try_into()
+                .expect("length already checked");
+            store
+                .get(&hash)
+                .ok_or(DecodeError::UnresolvedReference { hash })?
+        } else {
+            frame.body.clone()
+        };
+
+        // Stage 2: Per-block decompression.
+        let decompressed_body = if frame.flags.is_compressed() {
+            decompression::decompress(&resolved_body, MAX_BLOCK_DECOMPRESSED_SIZE)?
+        } else {
+            resolved_body
+        };
+
+        // Stage 3 & 4: Summary extraction + TLV decode.
+        let mut body = decompressed_body.as_slice();
         let mut summary = None;
 
-        if flags.has_summary() {
+        if frame.flags.has_summary() {
             match Summary::decode(body) {
                 Ok((sum, consumed)) => {
                     summary = Some(sum);
                     body = &body[consumed..];
                 }
-                Err(e) => return Some(Err(e.into())),
+                Err(e) => return Err(e.into()),
             }
         }
 
-        let content = match BlockContent::decode_body(&block_type, body) {
-            Ok(c) => c,
-            Err(e) => return Some(Err(e.into())),
-        };
+        let content = BlockContent::decode_body(&block_type, body)?;
 
-        Some(Ok(DecoderEvent::Block(Block {
+        Ok(DecoderEvent::Block(Block {
             block_type,
-            flags,
+            flags: frame.flags,
             summary,
             content,
-        })))
+        }))
     }
 
     /// Read the trailing flags + `content_len` bytes of an END frame.
@@ -249,6 +385,25 @@ impl<R: AsyncRead + Unpin> StreamingDecoder<R> {
         let (value, _) = decode_varint(&varint_buf[..len])?;
         Ok(value)
     }
+}
+
+/// Calculate the byte size of the END sentinel from a buffer slice.
+///
+/// Used by the streaming decoder when parsing from a decompressed
+/// payload buffer. The END sentinel is: `varint(0xFF)` + `flags(0x00)`
+/// + `varint(0x00)`.
+fn end_sentinel_size(buf: &[u8]) -> Result<usize, DecodeError> {
+    let (_, type_len) = decode_varint(buf)?;
+    let mut size = type_len;
+    // flags byte
+    size += 1;
+    // content_len varint
+    let rest = buf.get(size..).ok_or(DecodeError::Wire(
+        bcp_wire::WireError::UnexpectedEof { offset: size },
+    ))?;
+    let (_, len_size) = decode_varint(rest)?;
+    size += len_size;
+    Ok(size)
 }
 
 #[cfg(test)]
@@ -361,5 +516,127 @@ mod tests {
 
         // After all events, decoder should return None
         assert_eq!(events.len(), 2); // Header + 1 block
+    }
+
+    // ── Per-block compression streaming tests ───────────────────────────
+
+    #[tokio::test]
+    async fn streaming_per_block_compression_roundtrip() {
+        let big_content = "fn main() { println!(\"hello world\"); }\n".repeat(50);
+        let mut enc = LcpEncoder::new();
+        enc.add_code(Lang::Rust, "main.rs", big_content.as_bytes())
+            .with_compression();
+        let events = stream_roundtrip(&enc).await;
+
+        assert_eq!(events.len(), 2); // Header + 1 block
+        let block = match &events[1] {
+            DecoderEvent::Block(b) => b,
+            other => panic!("expected Block, got {other:?}"),
+        };
+
+        match &block.content {
+            BlockContent::Code(code) => {
+                assert_eq!(code.content, big_content.as_bytes());
+            }
+            other => panic!("expected Code, got {other:?}"),
+        }
+    }
+
+    // ── Whole-payload compression streaming tests ───────────────────────
+
+    #[tokio::test]
+    async fn streaming_whole_payload_compression_roundtrip() {
+        let big_content = "use std::io;\n".repeat(100);
+        let mut enc = LcpEncoder::new();
+        enc.add_code(Lang::Rust, "a.rs", big_content.as_bytes())
+            .add_code(Lang::Rust, "b.rs", big_content.as_bytes());
+        enc.compress_payload();
+        let events = stream_roundtrip(&enc).await;
+
+        // Header + 2 blocks
+        assert_eq!(events.len(), 3);
+
+        // Verify header has COMPRESSED flag
+        match &events[0] {
+            DecoderEvent::Header(h) => assert!(h.flags.is_compressed()),
+            other => panic!("expected Header, got {other:?}"),
+        }
+
+        // Both blocks should decompress correctly
+        for event in &events[1..] {
+            match event {
+                DecoderEvent::Block(block) => match &block.content {
+                    BlockContent::Code(code) => {
+                        assert_eq!(code.content, big_content.as_bytes());
+                    }
+                    other => panic!("expected Code, got {other:?}"),
+                },
+                other => panic!("expected Block, got {other:?}"),
+            }
+        }
+    }
+
+    // ── Content store streaming tests ───────────────────────────────────
+
+    #[tokio::test]
+    async fn streaming_content_addressing_roundtrip() {
+        let store = Arc::new(bcp_encoder::MemoryContentStore::new());
+        let mut enc = LcpEncoder::new();
+        enc.set_content_store(store.clone())
+            .add_code(Lang::Rust, "main.rs", b"fn main() {}")
+            .with_content_addressing();
+
+        let payload = enc.encode().unwrap();
+        let cursor = std::io::Cursor::new(payload);
+        let reader = tokio::io::BufReader::new(cursor);
+
+        let mut decoder = StreamingDecoder::new(reader).with_content_store(store);
+        let mut events = Vec::new();
+        while let Some(result) = decoder.next().await {
+            events.push(result.unwrap());
+        }
+
+        assert_eq!(events.len(), 2); // Header + 1 block
+        match &events[1] {
+            DecoderEvent::Block(block) => match &block.content {
+                BlockContent::Code(code) => {
+                    assert_eq!(code.content, b"fn main() {}");
+                }
+                other => panic!("expected Code, got {other:?}"),
+            },
+            other => panic!("expected Block, got {other:?}"),
+        }
+    }
+
+    #[tokio::test]
+    async fn streaming_matches_sync_compressed() {
+        let big_content = "pub fn hello() -> &'static str { \"world\" }\n".repeat(100);
+        let mut encoder = LcpEncoder::new();
+        encoder
+            .add_code(Lang::Rust, "lib.rs", big_content.as_bytes())
+            .with_summary("Hello function.")
+            .add_conversation(Role::User, b"explain");
+        encoder.compress_payload();
+
+        let payload = encoder.encode().unwrap();
+
+        // Sync decode
+        let sync_decoded = crate::LcpDecoder::decode(&payload).unwrap();
+
+        // Streaming decode
+        let events = stream_roundtrip(&encoder).await;
+        let stream_blocks: Vec<_> = events
+            .into_iter()
+            .filter_map(|e| match e {
+                DecoderEvent::Block(b) => Some(b),
+                _ => None,
+            })
+            .collect();
+
+        assert_eq!(sync_decoded.blocks.len(), stream_blocks.len());
+        for (sync_block, stream_block) in sync_decoded.blocks.iter().zip(stream_blocks.iter()) {
+            assert_eq!(sync_block.block_type, stream_block.block_type);
+            assert_eq!(sync_block.summary, stream_block.summary);
+        }
     }
 }

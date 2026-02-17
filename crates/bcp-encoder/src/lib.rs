@@ -1,11 +1,11 @@
 #![warn(clippy::pedantic)]
 
 pub mod block_writer;
+pub mod compression;
+pub mod content_store;
 pub mod encoder;
 pub mod error;
 
-mod compression;
-mod content_store;
-
+pub use content_store::MemoryContentStore;
 pub use encoder::LcpEncoder;
-pub use error::EncodeError;
+pub use error::{CompressionError, EncodeError};

@@ -8,6 +8,7 @@ bcp-wire = { path = "../bcp-wire" }
 bcp-types = { path = "../bcp-types" }
 thiserror = { workspace = true }
 tokio = { workspace = true }
+zstd = { workspace = true }
 
 [dev-dependencies]
 bcp-encoder = { path = "../bcp-encoder" }

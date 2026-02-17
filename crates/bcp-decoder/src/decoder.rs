@@ -1,9 +1,11 @@
 use bcp_types::block::{Block, BlockContent};
 use bcp_types::block_type::BlockType;
+use bcp_types::content_store::ContentStore;
 use bcp_types::summary::Summary;
 use bcp_wire::block_frame::BlockFrame;
 use bcp_wire::header::{HEADER_SIZE, LcpHeader};
 
+use crate::decompression::{self, MAX_BLOCK_DECOMPRESSED_SIZE, MAX_PAYLOAD_DECOMPRESSED_SIZE};
 use crate::error::DecodeError;
 
 /// The result of decoding an LCP payload.
@@ -38,15 +40,21 @@ pub struct DecodedPayload {
 /// blocks. It is the inverse of
 /// `LcpEncoder::encode` from the `bcp-encoder` crate.
 ///
-/// Decoding proceeds in three steps:
+/// Decoding proceeds in four steps:
 ///
 ///   1. **Header**: Validate and parse the 8-byte file header (magic
 ///      number, version, flags, reserved byte).
-///   2. **Block frames**: Iterate block frames by reading `BlockFrame`
-///      envelopes. For each frame, parse the block type and flags,
-///      optionally extract the summary sub-block, then deserialize the
-///      body into the corresponding `BlockContent` variant.
-///   3. **Termination**: Stop when an END sentinel (type=0xFF) is
+///   2. **Whole-payload decompression**: If the header's `COMPRESSED`
+///      flag (bit 0) is set, decompress all bytes after the header
+///      with zstd before parsing block frames.
+///   3. **Block frames**: Iterate block frames by reading `BlockFrame`
+///      envelopes. For each frame:
+///      - If `COMPRESSED` (bit 1): decompress the body with zstd.
+///      - If `IS_REFERENCE` (bit 2): resolve the 32-byte BLAKE3 hash
+///        against the content store to recover the original body.
+///      - Extract the summary sub-block if `HAS_SUMMARY` (bit 0) is set.
+///      - Deserialize the body into the corresponding `BlockContent`.
+///   4. **Termination**: Stop when an END sentinel (type=0xFF) is
 ///      encountered. Detect and report trailing data after the sentinel.
 ///
 /// Unknown block types are captured as `BlockContent::Unknown` and do
@@ -74,8 +82,13 @@ pub struct LcpDecoder;
 impl LcpDecoder {
     /// Decode a complete LCP payload from a byte slice.
     ///
-    /// Returns a [`DecodedPayload`] containing the header and an ordered
-    /// `Vec<Block>` (excluding the END sentinel).
+    /// This is the standard entry point for payloads that do not contain
+    /// content-addressed (reference) blocks. If the payload contains
+    /// blocks with the `IS_REFERENCE` flag, use
+    /// [`decode_with_store`](Self::decode_with_store) instead.
+    ///
+    /// Handles whole-payload and per-block zstd decompression
+    /// transparently.
     ///
     /// # Errors
     ///
@@ -83,24 +96,66 @@ impl LcpDecoder {
     ///   byte is wrong.
     /// - [`DecodeError::Wire`] if a block frame is malformed.
     /// - [`DecodeError::Type`] if a block body fails TLV deserialization.
+    /// - [`DecodeError::DecompressFailed`] if zstd decompression fails.
+    /// - [`DecodeError::DecompressionBomb`] if decompressed size exceeds
+    ///   the safety limit.
+    /// - [`DecodeError::MissingContentStore`] if a reference block is
+    ///   encountered (use `decode_with_store` instead).
     /// - [`DecodeError::MissingEndSentinel`] if the payload ends without an
     ///   END block.
     /// - [`DecodeError::TrailingData`] if extra bytes follow the END
     ///   sentinel.
     pub fn decode(payload: &[u8]) -> Result<DecodedPayload, DecodeError> {
+        Self::decode_inner(payload, None)
+    }
+
+    /// Decode a payload that may contain content-addressed blocks.
+    ///
+    /// Same as [`decode`](Self::decode), but accepts a [`ContentStore`]
+    /// for resolving `IS_REFERENCE` blocks. When a block's body is a
+    /// 32-byte BLAKE3 hash, the decoder looks it up in the store to
+    /// retrieve the original body bytes.
+    ///
+    /// # Errors
+    ///
+    /// All errors from [`decode`](Self::decode), plus:
+    /// - [`DecodeError::UnresolvedReference`] if a hash is not found in
+    ///   the content store.
+    pub fn decode_with_store(
+        payload: &[u8],
+        store: &dyn ContentStore,
+    ) -> Result<DecodedPayload, DecodeError> {
+        Self::decode_inner(payload, Some(store))
+    }
+
+    /// Shared decode implementation.
+    fn decode_inner(
+        payload: &[u8],
+        store: Option<&dyn ContentStore>,
+    ) -> Result<DecodedPayload, DecodeError> {
         // 1. Parse the 8-byte header.
         let header = LcpHeader::read_from(payload).map_err(DecodeError::InvalidHeader)?;
 
-        let mut cursor = HEADER_SIZE;
+        // 2. Whole-payload decompression.
+        let block_data: std::borrow::Cow<'_, [u8]> = if header.flags.is_compressed() {
+            let compressed = &payload[HEADER_SIZE..];
+            let decompressed =
+                decompression::decompress(compressed, MAX_PAYLOAD_DECOMPRESSED_SIZE)?;
+            std::borrow::Cow::Owned(decompressed)
+        } else {
+            std::borrow::Cow::Borrowed(&payload[HEADER_SIZE..])
+        };
+
+        let mut cursor = 0;
         let mut blocks = Vec::new();
         let mut found_end = false;
 
-        // 2. Read block frames until END sentinel or EOF.
-        while cursor < payload.len() {
-            let remaining = &payload[cursor..];
+        // 3. Read block frames until END sentinel or EOF.
+        while cursor < block_data.len() {
+            let remaining = &block_data[cursor..];
 
             if let Some((frame, consumed)) = BlockFrame::read_from(remaining)? {
-                let block = Self::decode_block_frame(&frame)?;
+                let block = Self::decode_block_frame(&frame, store)?;
                 blocks.push(block);
                 cursor += consumed;
             } else {
@@ -115,14 +170,14 @@ impl LcpDecoder {
             }
         }
 
-        // 3. Validate termination.
+        // 4. Validate termination.
         if !found_end {
             return Err(DecodeError::MissingEndSentinel);
         }
 
-        if cursor < payload.len() {
+        if cursor < block_data.len() {
             return Err(DecodeError::TrailingData {
-                extra_bytes: payload.len() - cursor,
+                extra_bytes: block_data.len() - cursor,
             });
         }
 
@@ -131,17 +186,46 @@ impl LcpDecoder {
 
     /// Decode a single block from a `BlockFrame`.
     ///
-    /// Handles summary extraction when the `HAS_SUMMARY` flag is set:
-    /// the summary occupies the front of the body (length-prefixed UTF-8),
-    /// followed by the TLV fields that [`BlockContent::decode_body`]
-    /// expects.
-    fn decode_block_frame(frame: &BlockFrame) -> Result<Block, DecodeError> {
+    /// Processing pipeline:
+    ///   1. If `IS_REFERENCE`: resolve the 32-byte hash via content store.
+    ///   2. If `COMPRESSED`: decompress the body with zstd.
+    ///   3. If `HAS_SUMMARY`: extract the summary from the front of the body.
+    ///   4. Deserialize the TLV body into a `BlockContent` variant.
+    fn decode_block_frame(
+        frame: &BlockFrame,
+        store: Option<&dyn ContentStore>,
+    ) -> Result<Block, DecodeError> {
         let block_type = BlockType::from_wire_id(frame.block_type);
-        let mut body = frame.body.as_slice();
+
+        // Stage 1: Resolve content-addressed references.
+        let resolved_body = if frame.flags.is_reference() {
+            let store = store.ok_or(DecodeError::MissingContentStore)?;
+            if frame.body.len() != 32 {
+                return Err(DecodeError::Wire(bcp_wire::WireError::UnexpectedEof {
+                    offset: frame.body.len(),
+                }));
+            }
+            let hash: [u8; 32] = frame.body[..32]
+                .try_into()
+                .expect("length already checked");
+            store
+                .get(&hash)
+                .ok_or(DecodeError::UnresolvedReference { hash })?
+        } else {
+            frame.body.clone()
+        };
+
+        // Stage 2: Decompress if needed.
+        let decompressed_body = if frame.flags.is_compressed() {
+            decompression::decompress(&resolved_body, MAX_BLOCK_DECOMPRESSED_SIZE)?
+        } else {
+            resolved_body
+        };
+
+        // Stage 3 & 4: Summary extraction + TLV body decode.
+        let mut body = decompressed_body.as_slice();
         let mut summary = None;
 
-        // If HAS_SUMMARY is set, the body starts with a length-prefixed
-        // summary string. Extract it and advance past it.
         if frame.flags.has_summary() {
             let (sum, consumed) = Summary::decode(body)?;
             summary = Some(sum);
@@ -199,7 +283,7 @@ mod tests {
         AnnotationKind, DataFormat, FormatHint, Lang, MediaType, Priority, Role, Status,
     };
     use bcp_types::file_tree::{FileEntry, FileEntryKind};
-    use bcp_wire::block_frame::BlockFlags;
+    use bcp_wire::block_frame::{BlockFlags, BlockFrame};
 
     // ── Round-trip helpers ────────────────────────────────────────────────
 
@@ -665,6 +749,203 @@ mod tests {
                 assert!(ext.content.is_empty());
             }
             other => panic!("expected Extension, got {other:?}"),
+        }
+    }
+
+    // ── Per-block compression roundtrip tests ───────────────────────────
+
+    #[test]
+    fn roundtrip_per_block_compression() {
+        let big_content = "fn main() { println!(\"hello world\"); }\n".repeat(50);
+        let payload = LcpEncoder::new()
+            .add_code(Lang::Rust, "main.rs", big_content.as_bytes())
+            .with_compression()
+            .encode()
+            .unwrap();
+
+        // Verify the block is actually compressed on the wire
+        let frame_buf = &payload[HEADER_SIZE..];
+        let (frame, _) = BlockFrame::read_from(frame_buf).unwrap().unwrap();
+        assert!(frame.flags.is_compressed());
+
+        // Decode should transparently decompress
+        let decoded = LcpDecoder::decode(&payload).unwrap();
+        assert_eq!(decoded.blocks.len(), 1);
+        match &decoded.blocks[0].content {
+            BlockContent::Code(code) => {
+                assert_eq!(code.path, "main.rs");
+                assert_eq!(code.content, big_content.as_bytes());
+            }
+            other => panic!("expected Code, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn roundtrip_per_block_compression_with_summary() {
+        let big_content = "pub fn process() -> Result<(), Error> { Ok(()) }\n".repeat(50);
+        let payload = LcpEncoder::new()
+            .add_code(Lang::Rust, "lib.rs", big_content.as_bytes())
+            .with_summary("Main processing function.")
+            .with_compression()
+            .encode()
+            .unwrap();
+
+        let decoded = LcpDecoder::decode(&payload).unwrap();
+        let block = &decoded.blocks[0];
+        assert!(block.flags.has_summary());
+        assert!(block.flags.is_compressed());
+        assert_eq!(block.summary.as_ref().unwrap().text, "Main processing function.");
+        match &block.content {
+            BlockContent::Code(code) => assert_eq!(code.content, big_content.as_bytes()),
+            other => panic!("expected Code, got {other:?}"),
+        }
+    }
+
+    // ── Whole-payload compression roundtrip tests ───────────────────────
+
+    #[test]
+    fn roundtrip_whole_payload_compression() {
+        let big_content = "use std::io;\n".repeat(100);
+        let payload = LcpEncoder::new()
+            .add_code(Lang::Rust, "a.rs", big_content.as_bytes())
+            .add_code(Lang::Rust, "b.rs", big_content.as_bytes())
+            .compress_payload()
+            .encode()
+            .unwrap();
+
+        let decoded = LcpDecoder::decode(&payload).unwrap();
+        assert_eq!(decoded.blocks.len(), 2);
+        assert!(decoded.header.flags.is_compressed());
+
+        for block in &decoded.blocks {
+            match &block.content {
+                BlockContent::Code(code) => {
+                    assert_eq!(code.content, big_content.as_bytes());
+                }
+                other => panic!("expected Code, got {other:?}"),
+            }
+        }
+    }
+
+    // ── Content addressing roundtrip tests ──────────────────────────────
+
+    #[test]
+    fn roundtrip_content_addressing() {
+        use std::sync::Arc;
+        use bcp_encoder::MemoryContentStore;
+
+        let store = Arc::new(MemoryContentStore::new());
+        let payload = LcpEncoder::new()
+            .set_content_store(store.clone())
+            .add_code(Lang::Rust, "main.rs", b"fn main() {}")
+            .with_content_addressing()
+            .encode()
+            .unwrap();
+
+        // Verify it's a reference on the wire
+        let frame_buf = &payload[HEADER_SIZE..];
+        let (frame, _) = BlockFrame::read_from(frame_buf).unwrap().unwrap();
+        assert!(frame.flags.is_reference());
+        assert_eq!(frame.body.len(), 32);
+
+        // decode() without store should fail
+        let result = LcpDecoder::decode(&payload);
+        assert!(matches!(result, Err(DecodeError::MissingContentStore)));
+
+        // decode_with_store should succeed
+        let decoded = LcpDecoder::decode_with_store(&payload, store.as_ref()).unwrap();
+        assert_eq!(decoded.blocks.len(), 1);
+        match &decoded.blocks[0].content {
+            BlockContent::Code(code) => {
+                assert_eq!(code.path, "main.rs");
+                assert_eq!(code.content, b"fn main() {}");
+            }
+            other => panic!("expected Code, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn roundtrip_auto_dedup() {
+        use std::sync::Arc;
+        use bcp_encoder::MemoryContentStore;
+
+        let store = Arc::new(MemoryContentStore::new());
+        let payload = LcpEncoder::new()
+            .set_content_store(store.clone())
+            .auto_dedup()
+            .add_code(Lang::Rust, "main.rs", b"fn main() {}")
+            .add_code(Lang::Rust, "main.rs", b"fn main() {}") // duplicate
+            .encode()
+            .unwrap();
+
+        let decoded = LcpDecoder::decode_with_store(&payload, store.as_ref()).unwrap();
+        assert_eq!(decoded.blocks.len(), 2);
+
+        // Both should decode to the same content
+        for block in &decoded.blocks {
+            match &block.content {
+                BlockContent::Code(code) => {
+                    assert_eq!(code.content, b"fn main() {}");
+                }
+                other => panic!("expected Code, got {other:?}"),
+            }
+        }
+    }
+
+    #[test]
+    fn unresolved_reference_errors() {
+        use std::sync::Arc;
+        use bcp_encoder::MemoryContentStore;
+
+        let encode_store = Arc::new(MemoryContentStore::new());
+        let payload = LcpEncoder::new()
+            .set_content_store(encode_store)
+            .add_code(Lang::Rust, "main.rs", b"fn main() {}")
+            .with_content_addressing()
+            .encode()
+            .unwrap();
+
+        // Decode with a fresh (empty) store — hash won't be found
+        let decode_store = MemoryContentStore::new();
+        let result = LcpDecoder::decode_with_store(&payload, &decode_store);
+        assert!(matches!(
+            result,
+            Err(DecodeError::UnresolvedReference { .. })
+        ));
+    }
+
+    // ── Combined compression + content addressing ───────────────────────
+
+    #[test]
+    fn roundtrip_refs_with_whole_payload_compression() {
+        use std::sync::Arc;
+        use bcp_encoder::MemoryContentStore;
+
+        let store = Arc::new(MemoryContentStore::new());
+        let big_content = "fn process() -> bool { true }\n".repeat(50);
+        let payload = LcpEncoder::new()
+            .set_content_store(store.clone())
+            .compress_payload()
+            .add_code(Lang::Rust, "main.rs", big_content.as_bytes())
+            .with_content_addressing()
+            .add_conversation(Role::User, b"Review this code")
+            .encode()
+            .unwrap();
+
+        let decoded = LcpDecoder::decode_with_store(&payload, store.as_ref()).unwrap();
+        assert_eq!(decoded.blocks.len(), 2);
+
+        match &decoded.blocks[0].content {
+            BlockContent::Code(code) => {
+                assert_eq!(code.content, big_content.as_bytes());
+            }
+            other => panic!("expected Code, got {other:?}"),
+        }
+        match &decoded.blocks[1].content {
+            BlockContent::Conversation(conv) => {
+                assert_eq!(conv.content, b"Review this code");
+            }
+            other => panic!("expected Conversation, got {other:?}"),
         }
     }
 }

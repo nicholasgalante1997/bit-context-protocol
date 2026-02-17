@@ -1,3 +1,6 @@
+use std::sync::Arc;
+
+use bcp_types::content_store::ContentStore;
 use bcp_types::BlockContent;
 use bcp_types::annotation::AnnotationBlock;
 use bcp_types::code::CodeBlock;
@@ -16,6 +19,7 @@ use bcp_types::tool_result::ToolResultBlock;
 use bcp_wire::block_frame::{BlockFlags, BlockFrame, block_type};
 use bcp_wire::header::{HEADER_SIZE, HeaderFlags, LcpHeader};
 
+use crate::compression::{self, COMPRESSION_THRESHOLD};
 use crate::error::EncodeError;
 
 /// Maximum block body size (16 MiB). Blocks exceeding this limit produce
@@ -32,6 +36,43 @@ const MAX_BLOCK_BODY_SIZE: usize = 16 * 1024 * 1024;
 /// [`with_summary`](Self::with_summary) and
 /// [`with_priority`](Self::with_priority) annotate the most recently
 /// added block.
+///
+/// # Compression (RFC §4.6)
+///
+/// Two compression modes are supported, both opt-in:
+///
+/// - **Per-block**: call [`with_compression`](Self::with_compression) after
+///   adding a block, or [`compress_blocks`](Self::compress_blocks) to
+///   enable compression for all subsequent blocks. Each block body is
+///   independently zstd-compressed if it exceeds
+///   [`COMPRESSION_THRESHOLD`](crate::compression::COMPRESSION_THRESHOLD)
+///   bytes and compression yields a size reduction. The block's
+///   `COMPRESSED` flag (bit 1) is set when compression is applied.
+///
+/// - **Whole-payload**: call [`compress_payload`](Self::compress_payload)
+///   to zstd-compress all bytes after the 8-byte header. When enabled,
+///   per-block compression is skipped (whole-payload subsumes it). The
+///   header's `COMPRESSED` flag (bit 0) is set.
+///
+/// # Content Addressing (RFC §4.7)
+///
+/// When a [`ContentStore`] is configured via
+/// [`set_content_store`](Self::set_content_store), blocks can be stored
+/// by their BLAKE3 hash rather than inline:
+///
+/// - **Per-block**: call [`with_content_addressing`](Self::with_content_addressing)
+///   after adding a block. The body is hashed, stored in the content store,
+///   and replaced with the 32-byte hash on the wire. The block's
+///   `IS_REFERENCE` flag (bit 2) is set.
+///
+/// - **Auto-dedup**: call [`auto_dedup`](Self::auto_dedup) to automatically
+///   content-address any block whose body has been seen before. First
+///   occurrence is stored inline and registered in the store; subsequent
+///   identical blocks become references.
+///
+/// Content addressing runs before compression — a 32-byte hash reference
+/// is always below the compression threshold, so reference blocks are
+/// never compressed.
 ///
 /// # Usage
 ///
@@ -65,19 +106,40 @@ const MAX_BLOCK_BODY_SIZE: usize = 16 * 1024 * 1024;
 /// └──────────────┴──────────────────────────────────────────┘
 /// ```
 ///
+/// When whole-payload compression is enabled, the layout becomes:
+///
+/// ```text
+/// ┌──────────────┬──────────────────────────────────────────┐
+/// │ [8 bytes]    │ Header (flags bit 0 = COMPRESSED)        │
+/// │ [N bytes]    │ zstd(Block 0 + Block 1 + ... + END)      │
+/// └──────────────┴──────────────────────────────────────────┘
+/// ```
+///
 /// The payload is ready for storage or transmission — no further
 /// framing is required.
 pub struct LcpEncoder {
     blocks: Vec<PendingBlock>,
     flags: HeaderFlags,
+    /// When `true`, the entire payload after the header is zstd-compressed.
+    compress_payload: bool,
+    /// When `true`, all blocks are individually compressed (unless
+    /// `compress_payload` is also set, which takes precedence).
+    compress_all_blocks: bool,
+    /// Content store for BLAKE3 content-addressed deduplication.
+    /// Required when any block has `content_address = true` or
+    /// when `auto_dedup` is enabled.
+    content_store: Option<Arc<dyn ContentStore>>,
+    /// When `true`, automatically content-address any block whose body
+    /// has been seen before (hash already exists in the store).
+    auto_dedup: bool,
 }
 
 /// Internal representation of a block awaiting serialization.
 ///
 /// Captures the block type tag, the typed content (which knows how to
 /// serialize its own TLV body via [`BlockContent::encode_body`]), an
-/// optional summary to prepend, and a compression flag (stubbed in
-/// Phase 1 — always `false`).
+/// optional summary to prepend, and per-block compression / content
+/// addressing flags.
 ///
 /// `PendingBlock` is never exposed publicly. The encoder builds these
 /// internally as the caller chains `.add_*()` and `.with_*()` methods,
@@ -86,23 +148,29 @@ struct PendingBlock {
     block_type: u8,
     content: BlockContent,
     summary: Option<String>,
-    /// Phase 1 stub — always `false`. Will be used when zstd compression
-    /// is implemented in Phase 2.
-    #[allow(dead_code)]
+    /// When `true`, this block's body should be zstd-compressed if it
+    /// exceeds [`COMPRESSION_THRESHOLD`] and compression yields savings.
     compress: bool,
+    /// When `true`, this block's body should be replaced with its
+    /// 32-byte BLAKE3 hash and stored in the content store.
+    content_address: bool,
 }
 
 impl LcpEncoder {
     /// Create a new encoder with default settings (version 1.0, no flags).
     ///
-    /// The encoder starts with an empty block list. At least one block
-    /// must be added before calling `.encode()`, otherwise it returns
-    /// [`EncodeError::EmptyPayload`].
+    /// The encoder starts with an empty block list, no compression, and
+    /// no content store. At least one block must be added before calling
+    /// `.encode()`, otherwise it returns [`EncodeError::EmptyPayload`].
     #[must_use]
     pub fn new() -> Self {
         Self {
             blocks: Vec::new(),
             flags: HeaderFlags::NONE,
+            compress_payload: false,
+            compress_all_blocks: false,
+            content_store: None,
+            auto_dedup: false,
         }
     }
 
@@ -393,28 +461,161 @@ impl LcpEncoder {
         self
     }
 
+    // ── Compression modifiers ────────────────────────────────────────────
+    //
+    // These methods control per-block and whole-payload zstd compression.
+    // Per-block compression is skipped when whole-payload compression is
+    // enabled — the outer zstd frame subsumes individual block compression.
+
+    /// Enable zstd compression for the most recently added block.
+    ///
+    /// During `.encode()`, the block body is compressed with zstd if it
+    /// exceeds [`COMPRESSION_THRESHOLD`] bytes and compression yields a
+    /// size reduction. If compression doesn't help (output >= input), the
+    /// body is stored uncompressed and the `COMPRESSED` flag is not set.
+    ///
+    /// Has no effect if [`compress_payload`](Self::compress_payload) is
+    /// also enabled — whole-payload compression takes precedence.
+    ///
+    /// # Panics
+    ///
+    /// Panics if no blocks have been added yet.
+    pub fn with_compression(&mut self) -> &mut Self {
+        let block = self
+            .blocks
+            .last_mut()
+            .expect("with_compression called but no blocks have been added");
+        block.compress = true;
+        self
+    }
+
+    /// Enable zstd compression for all blocks added so far and all
+    /// future blocks.
+    ///
+    /// Equivalent to calling [`with_compression`](Self::with_compression)
+    /// on every block. Individual blocks still respect the size threshold
+    /// and no-savings guard.
+    pub fn compress_blocks(&mut self) -> &mut Self {
+        self.compress_all_blocks = true;
+        for block in &mut self.blocks {
+            block.compress = true;
+        }
+        self
+    }
+
+    /// Enable whole-payload zstd compression.
+    ///
+    /// When set, the entire block stream (all frames + END sentinel) is
+    /// compressed as a single zstd frame. The 8-byte header is written
+    /// uncompressed with `HeaderFlags::COMPRESSED` set so the decoder
+    /// can detect compression before reading further.
+    ///
+    /// When whole-payload compression is enabled, per-block compression
+    /// is skipped — compressing within a compressed stream adds overhead
+    /// without benefit.
+    ///
+    /// If compression doesn't reduce the total size, the payload is
+    /// stored uncompressed and the header flag is not set.
+    pub fn compress_payload(&mut self) -> &mut Self {
+        self.compress_payload = true;
+        self
+    }
+
+    // ── Content addressing modifiers ────────────────────────────────────
+    //
+    // These methods control BLAKE3 content-addressed deduplication.
+    // A content store must be configured before blocks can be
+    // content-addressed.
+
+    /// Set the content store used for BLAKE3 content addressing.
+    ///
+    /// The store is shared via `Arc` so the same store can be passed to
+    /// both the encoder and decoder for roundtrip workflows. The encoder
+    /// calls `store.put()` for each content-addressed block; the decoder
+    /// calls `store.get()` to resolve references.
+    ///
+    /// Must be called before `.encode()` if any block has content
+    /// addressing enabled or if [`auto_dedup`](Self::auto_dedup) is set.
+    pub fn set_content_store(&mut self, store: Arc<dyn ContentStore>) -> &mut Self {
+        self.content_store = Some(store);
+        self
+    }
+
+    /// Enable content addressing for the most recently added block.
+    ///
+    /// During `.encode()`, the block body is hashed with BLAKE3,
+    /// stored in the content store, and replaced with the 32-byte hash
+    /// on the wire. The block's `IS_REFERENCE` flag (bit 2) is set.
+    ///
+    /// Requires a content store — call
+    /// [`set_content_store`](Self::set_content_store) before `.encode()`.
+    ///
+    /// Content addressing runs before compression. Since a 32-byte
+    /// hash reference is always below [`COMPRESSION_THRESHOLD`],
+    /// reference blocks are never per-block compressed.
+    ///
+    /// # Panics
+    ///
+    /// Panics if no blocks have been added yet.
+    pub fn with_content_addressing(&mut self) -> &mut Self {
+        let block = self
+            .blocks
+            .last_mut()
+            .expect("with_content_addressing called but no blocks have been added");
+        block.content_address = true;
+        self
+    }
+
+    /// Enable automatic deduplication across all blocks.
+    ///
+    /// When set, the encoder hashes every block body with BLAKE3 during
+    /// `.encode()`. If the hash already exists in the content store
+    /// (i.e. a previous block in this or a prior encoding had the same
+    /// content), the block is automatically replaced with a hash
+    /// reference. First-occurrence blocks are stored inline and
+    /// registered in the store for future dedup.
+    ///
+    /// Requires a content store — call
+    /// [`set_content_store`](Self::set_content_store) before `.encode()`.
+    pub fn auto_dedup(&mut self) -> &mut Self {
+        self.auto_dedup = true;
+        self
+    }
+
     // ── Encode ──────────────────────────────────────────────────────────
 
     /// Serialize all accumulated blocks into a complete LCP payload.
     ///
-    /// Walks the internal block list and for each `PendingBlock`:
+    /// The encode pipeline processes each `PendingBlock` through up to
+    /// three stages:
     ///
-    ///   1. Calls [`BlockContent::encode_body`] to get the TLV-encoded
-    ///      body bytes.
-    ///   2. If a summary is present, prepends the summary bytes and sets
-    ///      the `HAS_SUMMARY` flag.
-    ///   3. Wraps the body in a [`BlockFrame`] with the correct type tag
-    ///      and flags.
-    ///   4. Writes the frame to the output buffer via
-    ///      [`BlockFrame::write_to`].
+    ///   1. **Serialize** — calls [`BlockContent::encode_body`] to get
+    ///      the TLV-encoded body bytes. If a summary is present, it is
+    ///      prepended and the `HAS_SUMMARY` flag is set.
     ///
-    /// After all blocks, appends the END sentinel (type=0xFF, flags=0x00,
-    /// len=0) to signal the end of the block stream.
+    ///   2. **Content address** (optional) — if the block has
+    ///      `content_address = true` or auto-dedup detects a duplicate,
+    ///      the body is hashed with BLAKE3, stored in the content store,
+    ///      and replaced with the 32-byte hash. The `IS_REFERENCE` flag
+    ///      (bit 2) is set.
+    ///
+    ///   3. **Per-block compress** (optional) — if compression is enabled
+    ///      for this block, whole-payload compression is NOT active, and
+    ///      the body is not a reference, the body is zstd-compressed if
+    ///      it exceeds [`COMPRESSION_THRESHOLD`] and compression yields
+    ///      savings. The `COMPRESSED` flag (bit 1) is set.
+    ///
+    /// After all blocks, the END sentinel is appended. If whole-payload
+    /// compression is enabled, everything after the 8-byte header is
+    /// compressed as a single zstd frame and the header's `COMPRESSED`
+    /// flag is set.
     ///
     /// # Errors
     ///
     /// - [`EncodeError::EmptyPayload`] if no blocks have been added.
     /// - [`EncodeError::BlockTooLarge`] if any block body exceeds 16 MiB.
+    /// - [`EncodeError::MissingContentStore`] if content addressing is
+    ///   requested but no store has been configured.
     /// - [`EncodeError::Wire`] if the underlying wire serialization fails.
     /// - [`EncodeError::Io`] if writing to the output buffer fails.
     pub fn encode(&self) -> Result<Vec<u8>, EncodeError> {
@@ -422,31 +623,53 @@ impl LcpEncoder {
             return Err(EncodeError::EmptyPayload);
         }
 
+        // Validate: if any block needs content addressing or auto_dedup
+        // is enabled, a store must be present.
+        let needs_store = self.auto_dedup || self.blocks.iter().any(|b| b.content_address);
+        if needs_store && self.content_store.is_none() {
+            return Err(EncodeError::MissingContentStore);
+        }
+
         // Pre-allocate: 8 bytes header + estimated block data + END sentinel.
-        // A rough estimate: assume each block averages ~256 bytes on the wire.
         let estimated_size = HEADER_SIZE + self.blocks.len() * 256 + 3;
         let mut output = Vec::with_capacity(estimated_size);
 
-        // 1. Write the file header into the first 8 bytes.
+        // 1. Write a placeholder header (flags may be updated for whole-payload).
         output.resize(HEADER_SIZE, 0);
-        let header = LcpHeader::new(self.flags);
-        header.write_to(&mut output[..HEADER_SIZE])?;
 
-        // 2. Serialize each pending block into a BlockFrame and write it.
+        // 2. Serialize each pending block through the encode pipeline.
         for pending in &self.blocks {
-            let body = Self::serialize_block_body(pending)?;
+            let mut body = Self::serialize_block_body(pending)?;
+            let mut flags_raw = 0u8;
 
-            let mut flags = BlockFlags::NONE;
             if pending.summary.is_some() {
-                flags = BlockFlags::HAS_SUMMARY;
+                flags_raw |= BlockFlags::HAS_SUMMARY.raw();
+            }
+
+            // Stage 2: Content addressing (runs before compression).
+            let is_reference = self.apply_content_addressing(pending, &mut body)?;
+            if is_reference {
+                flags_raw |= BlockFlags::IS_REFERENCE.raw();
+            }
+
+            // Stage 3: Per-block compression (skipped for references and
+            // when whole-payload compression is active).
+            if !is_reference && !self.compress_payload {
+                let should_compress =
+                    pending.compress || self.compress_all_blocks;
+                if should_compress && body.len() >= COMPRESSION_THRESHOLD {
+                    if let Some(compressed) = compression::compress(&body) {
+                        body = compressed;
+                        flags_raw |= BlockFlags::COMPRESSED.raw();
+                    }
+                }
             }
 
             let frame = BlockFrame {
                 block_type: pending.block_type,
-                flags,
+                flags: BlockFlags::from_raw(flags_raw),
                 body,
             };
-
             frame.write_to(&mut output)?;
         }
 
@@ -458,6 +681,27 @@ impl LcpEncoder {
         };
         end_frame.write_to(&mut output)?;
 
+        // 4. Whole-payload compression: compress everything after the header.
+        let header_flags = if self.compress_payload {
+            let block_data = &output[HEADER_SIZE..];
+            match compression::compress(block_data) {
+                Some(compressed) => {
+                    output.truncate(HEADER_SIZE);
+                    output.extend_from_slice(&compressed);
+                    HeaderFlags::from_raw(
+                        self.flags.raw() | HeaderFlags::COMPRESSED.raw(),
+                    )
+                }
+                None => self.flags,
+            }
+        } else {
+            self.flags
+        };
+
+        // 5. Write the final header with correct flags.
+        let header = LcpHeader::new(header_flags);
+        header.write_to(&mut output[..HEADER_SIZE])?;
+
         Ok(output)
     }
 
@@ -465,15 +709,61 @@ impl LcpEncoder {
 
     /// Push a new `PendingBlock` onto the internal list.
     ///
+    /// If `compress_all_blocks` is set, the new block inherits
+    /// `compress = true` automatically.
+    ///
     /// Returns `&mut Self` so callers can chain additional methods.
     fn push_block(&mut self, block_type: u8, content: BlockContent) -> &mut Self {
         self.blocks.push(PendingBlock {
             block_type,
             content,
             summary: None,
-            compress: false,
+            compress: self.compress_all_blocks,
+            content_address: false,
         });
         self
+    }
+
+    /// Apply content addressing to a block body if requested.
+    ///
+    /// Returns `true` if the body was replaced with a 32-byte hash
+    /// reference, `false` if the body is unchanged (inline).
+    ///
+    /// Two paths trigger content addressing:
+    /// 1. `pending.content_address == true` — always replace with hash.
+    /// 2. `self.auto_dedup == true` — replace only if the hash already
+    ///    exists in the store (i.e. a duplicate). First occurrence is
+    ///    stored inline and registered for future dedup.
+    fn apply_content_addressing(
+        &self,
+        pending: &PendingBlock,
+        body: &mut Vec<u8>,
+    ) -> Result<bool, EncodeError> {
+        let store = match &self.content_store {
+            Some(s) => s,
+            None => return Ok(false),
+        };
+
+        if pending.content_address {
+            // Explicit content addressing: always replace with hash.
+            let hash = store.put(body);
+            *body = hash.to_vec();
+            return Ok(true);
+        }
+
+        if self.auto_dedup {
+            // Auto-dedup: check if this body was seen before.
+            let hash: [u8; 32] = blake3::hash(body).into();
+            if store.contains(&hash) {
+                // Duplicate — replace with reference.
+                *body = hash.to_vec();
+                return Ok(true);
+            }
+            // First occurrence — store for future dedup, keep inline.
+            store.put(body);
+        }
+
+        Ok(false)
     }
 
     /// Serialize a `PendingBlock` into its final body bytes.
@@ -844,5 +1134,451 @@ mod tests {
         let from_default = LcpEncoder::default();
         assert!(from_new.blocks.is_empty());
         assert!(from_default.blocks.is_empty());
+    }
+
+    // ── Per-block compression tests ─────────────────────────────────────
+
+    #[test]
+    fn per_block_compression_sets_compressed_flag() {
+        // Create a large, compressible block (exceeds COMPRESSION_THRESHOLD)
+        let big_content = "fn main() { println!(\"hello world\"); }\n".repeat(50);
+        let payload = LcpEncoder::new()
+            .add_code(Lang::Rust, "main.rs", big_content.as_bytes())
+            .with_compression()
+            .encode()
+            .unwrap();
+
+        let (frame, _) = BlockFrame::read_from(&payload[HEADER_SIZE..])
+            .unwrap()
+            .unwrap();
+        assert!(
+            frame.flags.is_compressed(),
+            "COMPRESSED flag should be set on a large compressible block"
+        );
+        assert!(
+            frame.body.len() < big_content.len(),
+            "compressed body should be smaller than original"
+        );
+    }
+
+    #[test]
+    fn small_block_not_compressed_even_when_requested() {
+        let payload = LcpEncoder::new()
+            .add_code(Lang::Rust, "x.rs", b"let x = 1;")
+            .with_compression()
+            .encode()
+            .unwrap();
+
+        let (frame, _) = BlockFrame::read_from(&payload[HEADER_SIZE..])
+            .unwrap()
+            .unwrap();
+        assert!(
+            !frame.flags.is_compressed(),
+            "small blocks should not be compressed (below threshold)"
+        );
+    }
+
+    #[test]
+    fn compress_blocks_applies_to_all() {
+        let big_content = "use std::io;\n".repeat(100);
+        let payload = LcpEncoder::new()
+            .add_code(Lang::Rust, "a.rs", big_content.as_bytes())
+            .add_code(Lang::Rust, "b.rs", big_content.as_bytes())
+            .compress_blocks()
+            .encode()
+            .unwrap();
+
+        let mut cursor = HEADER_SIZE;
+        for _ in 0..2 {
+            let (frame, n) = BlockFrame::read_from(&payload[cursor..])
+                .unwrap()
+                .unwrap();
+            assert!(
+                frame.flags.is_compressed(),
+                "all blocks should be compressed with compress_blocks()"
+            );
+            cursor += n;
+        }
+    }
+
+    // ── Whole-payload compression tests ─────────────────────────────────
+
+    #[test]
+    fn whole_payload_compression_sets_header_flag() {
+        let big_content = "pub fn hello() -> &'static str { \"world\" }\n".repeat(100);
+        let payload = LcpEncoder::new()
+            .add_code(Lang::Rust, "main.rs", big_content.as_bytes())
+            .compress_payload()
+            .encode()
+            .unwrap();
+
+        let header = LcpHeader::read_from(&payload[..HEADER_SIZE]).unwrap();
+        assert!(
+            header.flags.is_compressed(),
+            "header COMPRESSED flag should be set for whole-payload compression"
+        );
+    }
+
+    #[test]
+    fn whole_payload_skips_per_block_compression() {
+        // When whole-payload compression is active, individual block
+        // COMPRESSED flags should NOT be set.
+        let big_content = "pub fn hello() -> &'static str { \"world\" }\n".repeat(100);
+        let payload = LcpEncoder::new()
+            .add_code(Lang::Rust, "main.rs", big_content.as_bytes())
+            .with_compression()
+            .compress_payload()
+            .encode()
+            .unwrap();
+
+        let header = LcpHeader::read_from(&payload[..HEADER_SIZE]).unwrap();
+        assert!(header.flags.is_compressed());
+
+        // Decompress the payload to check individual blocks
+        let decompressed = crate::compression::decompress(
+            &payload[HEADER_SIZE..],
+            16 * 1024 * 1024,
+        )
+        .unwrap();
+
+        let (frame, _) = BlockFrame::read_from(&decompressed).unwrap().unwrap();
+        assert!(
+            !frame.flags.is_compressed(),
+            "per-block COMPRESSED flag should not be set when whole-payload is active"
+        );
+    }
+
+    #[test]
+    fn whole_payload_no_savings_stays_uncompressed() {
+        // Tiny payload — zstd overhead exceeds savings
+        let payload = LcpEncoder::new()
+            .add_code(Lang::Rust, "x.rs", b"x")
+            .compress_payload()
+            .encode()
+            .unwrap();
+
+        let header = LcpHeader::read_from(&payload[..HEADER_SIZE]).unwrap();
+        assert!(
+            !header.flags.is_compressed(),
+            "header COMPRESSED flag should NOT be set when compression yields no savings"
+        );
+    }
+
+    // ── Content addressing tests ────────────────────────────────────────
+
+    #[test]
+    fn content_addressing_sets_reference_flag() {
+        let store = Arc::new(crate::MemoryContentStore::new());
+        let payload = LcpEncoder::new()
+            .set_content_store(store.clone())
+            .add_code(Lang::Rust, "main.rs", b"fn main() {}")
+            .with_content_addressing()
+            .encode()
+            .unwrap();
+
+        let (frame, _) = BlockFrame::read_from(&payload[HEADER_SIZE..])
+            .unwrap()
+            .unwrap();
+        assert!(
+            frame.flags.is_reference(),
+            "IS_REFERENCE flag should be set on content-addressed block"
+        );
+        assert_eq!(
+            frame.body.len(),
+            32,
+            "reference block body should be exactly 32 bytes (BLAKE3 hash)"
+        );
+
+        // The hash should resolve in the store
+        let hash: [u8; 32] = frame.body.try_into().unwrap();
+        assert!(store.contains(&hash));
+    }
+
+    #[test]
+    fn content_addressing_without_store_errors() {
+        let result = LcpEncoder::new()
+            .add_code(Lang::Rust, "main.rs", b"fn main() {}")
+            .with_content_addressing()
+            .encode();
+
+        assert!(
+            matches!(result, Err(EncodeError::MissingContentStore)),
+            "should error when content addressing is requested without a store"
+        );
+    }
+
+    #[test]
+    fn auto_dedup_detects_duplicate_blocks() {
+        let store = Arc::new(crate::MemoryContentStore::new());
+        // Both blocks must have identical serialized TLV bodies (same
+        // path + content + lang) for auto-dedup to detect a duplicate.
+        let content = b"fn main() {}";
+
+        let payload = LcpEncoder::new()
+            .set_content_store(store.clone())
+            .auto_dedup()
+            .add_code(Lang::Rust, "main.rs", content)
+            .add_code(Lang::Rust, "main.rs", content) // identical TLV body
+            .encode()
+            .unwrap();
+
+        let mut cursor = HEADER_SIZE;
+
+        // First block: inline (first occurrence)
+        let (frame0, n) = BlockFrame::read_from(&payload[cursor..]).unwrap().unwrap();
+        assert!(
+            !frame0.flags.is_reference(),
+            "first occurrence should be stored inline"
+        );
+        cursor += n;
+
+        // Second block: reference (duplicate)
+        let (frame1, _) = BlockFrame::read_from(&payload[cursor..]).unwrap().unwrap();
+        assert!(
+            frame1.flags.is_reference(),
+            "duplicate should become a hash reference"
+        );
+        assert_eq!(frame1.body.len(), 32);
+    }
+
+    #[test]
+    fn auto_dedup_without_store_errors() {
+        let result = LcpEncoder::new()
+            .auto_dedup()
+            .add_code(Lang::Rust, "x.rs", b"code")
+            .encode();
+
+        assert!(matches!(result, Err(EncodeError::MissingContentStore)));
+    }
+
+    #[test]
+    fn reference_block_not_per_block_compressed() {
+        // Content-addressed blocks produce 32-byte bodies which are
+        // below the compression threshold — verify no COMPRESSED flag.
+        let store = Arc::new(crate::MemoryContentStore::new());
+        let big_content = "fn main() { println!(\"hello\"); }\n".repeat(50);
+        let payload = LcpEncoder::new()
+            .set_content_store(store)
+            .add_code(Lang::Rust, "main.rs", big_content.as_bytes())
+            .with_content_addressing()
+            .with_compression()
+            .encode()
+            .unwrap();
+
+        let (frame, _) = BlockFrame::read_from(&payload[HEADER_SIZE..])
+            .unwrap()
+            .unwrap();
+        assert!(frame.flags.is_reference());
+        assert!(
+            !frame.flags.is_compressed(),
+            "reference blocks should not be per-block compressed"
+        );
+    }
+
+    #[test]
+    fn content_addressing_with_whole_payload_compression() {
+        // Reference blocks CAN be wrapped in whole-payload compression.
+        let store = Arc::new(crate::MemoryContentStore::new());
+        // Same path + content = identical TLV body = single store entry
+        let content = "fn main() { println!(\"hello\"); }\n".repeat(50);
+
+        let payload = LcpEncoder::new()
+            .set_content_store(store.clone())
+            .compress_payload()
+            .add_code(Lang::Rust, "main.rs", content.as_bytes())
+            .with_content_addressing()
+            .add_code(Lang::Rust, "main.rs", content.as_bytes())
+            .with_content_addressing()
+            .encode()
+            .unwrap();
+
+        let header = LcpHeader::read_from(&payload[..HEADER_SIZE]).unwrap();
+        // The payload might or might not be compressed (two 32-byte hashes
+        // plus framing may not compress well), but if it is, verify it's valid.
+        if header.flags.is_compressed() {
+            let decompressed = crate::compression::decompress(
+                &payload[HEADER_SIZE..],
+                16 * 1024 * 1024,
+            )
+            .unwrap();
+
+            let (frame, _) = BlockFrame::read_from(&decompressed).unwrap().unwrap();
+            assert!(frame.flags.is_reference());
+            assert_eq!(frame.body.len(), 32);
+        }
+
+        // Both blocks have identical TLV bodies → single store entry
+        assert_eq!(store.len(), 1, "identical blocks should produce one store entry");
+    }
+
+    // ── Phase 4: Cross-cutting tests ────────────────────────────────────
+
+    #[test]
+    fn compression_ratio_benchmark() {
+        // A realistic 50-line Rust file should compress by >= 20%.
+        let rust_code = r#"use std::collections::HashMap;
+use std::sync::Arc;
+
+pub struct Config {
+    pub name: String,
+    pub values: HashMap<String, String>,
+    pub timeout: u64,
+}
+
+impl Config {
+    pub fn new(name: &str) -> Self {
+        Self {
+            name: name.to_string(),
+            values: HashMap::new(),
+            timeout: 30,
+        }
+    }
+
+    pub fn set(&mut self, key: &str, value: &str) {
+        self.values.insert(key.to_string(), value.to_string());
+    }
+
+    pub fn get(&self, key: &str) -> Option<&String> {
+        self.values.get(key)
+    }
+
+    pub fn timeout(&self) -> u64 {
+        self.timeout
+    }
+}
+
+impl Default for Config {
+    fn default() -> Self {
+        Self::new("default")
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_new_config() {
+        let config = Config::new("test");
+        assert_eq!(config.name, "test");
+        assert!(config.values.is_empty());
+        assert_eq!(config.timeout(), 30);
+    }
+
+    #[test]
+    fn test_set_and_get() {
+        let mut config = Config::new("test");
+        config.set("key", "value");
+        assert_eq!(config.get("key"), Some(&"value".to_string()));
+    }
+}
+"#;
+
+        let uncompressed_payload = LcpEncoder::new()
+            .add_code(Lang::Rust, "config.rs", rust_code.as_bytes())
+            .encode()
+            .unwrap();
+
+        let compressed_payload = LcpEncoder::new()
+            .add_code(Lang::Rust, "config.rs", rust_code.as_bytes())
+            .with_compression()
+            .encode()
+            .unwrap();
+
+        let savings_pct = 100.0
+            * (1.0 - compressed_payload.len() as f64 / uncompressed_payload.len() as f64);
+
+        assert!(
+            savings_pct >= 20.0,
+            "expected >= 20% compression savings on a 50-line Rust file, got {savings_pct:.1}%"
+        );
+    }
+
+    #[test]
+    fn whole_payload_wins_over_per_block() {
+        // When both per-block and whole-payload compression are requested,
+        // only the header COMPRESSED flag should be set; individual blocks
+        // should NOT have their COMPRESSED flags set.
+        let big_content = "pub fn process() -> Result<(), Error> { Ok(()) }\n".repeat(50);
+        let payload = LcpEncoder::new()
+            .add_code(Lang::Rust, "a.rs", big_content.as_bytes())
+            .with_compression()
+            .add_code(Lang::Rust, "b.rs", big_content.as_bytes())
+            .with_compression()
+            .compress_payload()
+            .encode()
+            .unwrap();
+
+        let header = LcpHeader::read_from(&payload[..HEADER_SIZE]).unwrap();
+        assert!(
+            header.flags.is_compressed(),
+            "header should have COMPRESSED flag"
+        );
+
+        // Decompress payload to inspect individual blocks
+        let decompressed = crate::compression::decompress(
+            &payload[HEADER_SIZE..],
+            16 * 1024 * 1024,
+        )
+        .unwrap();
+
+        let mut cursor = 0;
+        while let Some((frame, n)) = BlockFrame::read_from(&decompressed[cursor..])
+            .unwrap()
+        {
+            assert!(
+                !frame.flags.is_compressed(),
+                "individual blocks should NOT be compressed when whole-payload is active"
+            );
+            cursor += n;
+        }
+    }
+
+    #[test]
+    fn full_pipeline_encode_decode_roundtrip() {
+        // Exercises all features together: multiple block types,
+        // summaries, priorities, per-block compression, content
+        // addressing, and auto-dedup.
+        let store = Arc::new(crate::MemoryContentStore::new());
+        let big_code = "fn compute() -> i64 { 42 }\n".repeat(50);
+
+        let payload = LcpEncoder::new()
+            .set_content_store(store.clone())
+            .auto_dedup()
+            .add_code(Lang::Rust, "lib.rs", big_code.as_bytes())
+            .with_summary("Core computation module.")
+            .with_compression()
+            .add_code(Lang::Rust, "lib.rs", big_code.as_bytes()) // auto-dedup
+            .add_conversation(Role::User, b"Review this code")
+            .add_tool_result("clippy", Status::Ok, b"No warnings")
+            .encode()
+            .unwrap();
+
+        // Decode with the same store
+        let decoded = bcp_decoder::LcpDecoder::decode_with_store(
+            &payload,
+            store.as_ref(),
+        )
+        .unwrap();
+
+        assert_eq!(decoded.blocks.len(), 4);
+        assert_eq!(decoded.blocks[0].block_type, bcp_types::BlockType::Code);
+        assert_eq!(
+            decoded.blocks[0].summary.as_ref().unwrap().text,
+            "Core computation module."
+        );
+        assert_eq!(decoded.blocks[1].block_type, bcp_types::BlockType::Code);
+        assert_eq!(decoded.blocks[2].block_type, bcp_types::BlockType::Conversation);
+        assert_eq!(decoded.blocks[3].block_type, bcp_types::BlockType::ToolResult);
+
+        // Both code blocks should have the same content
+        for block in &decoded.blocks[..2] {
+            match &block.content {
+                BlockContent::Code(code) => {
+                    assert_eq!(code.content, big_code.as_bytes());
+                }
+                other => panic!("expected Code, got {other:?}"),
+            }
+        }
     }
 }

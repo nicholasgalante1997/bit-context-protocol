@@ -4,8 +4,9 @@ use bcp_wire::WireError;
 /// Errors that can occur during LCP payload decoding.
 ///
 /// The decoder validates at multiple levels: header integrity, block
-/// frame structure, TLV body fields, and stream termination. Each
-/// error variant captures enough context for meaningful diagnostics.
+/// frame structure, TLV body fields, stream termination, decompression,
+/// and content store resolution. Each error variant captures enough
+/// context for meaningful diagnostics.
 ///
 /// Error hierarchy:
 ///
@@ -17,6 +18,10 @@ use bcp_wire::WireError;
 ///   ├── InvalidUtf8                ← string field contains non-UTF-8 bytes
 ///   ├── MissingEndSentinel         ← payload ran out without END block
 ///   ├── TrailingData               ← extra bytes after END sentinel
+///   ├── DecompressFailed           ← zstd decompression error
+///   ├── DecompressionBomb          ← decompressed size exceeds safety limit
+///   ├── UnresolvedReference        ← BLAKE3 hash not found in content store
+///   ├── MissingContentStore        ← IS_REFERENCE block but no store provided
 ///   ├── Type(TypeError)            ← from bcp-types body deserialization
 ///   ├── Wire(WireError)            ← from bcp-wire frame parsing
 ///   └── Io(std::io::Error)         ← from underlying I/O reads
@@ -70,6 +75,41 @@ pub enum DecodeError {
     /// error variant so callers can decide how to handle it.
     #[error("unexpected data after END sentinel ({extra_bytes} bytes)")]
     TrailingData { extra_bytes: usize },
+
+    /// Zstd decompression failed.
+    ///
+    /// Returned when a block's `COMPRESSED` flag (bit 1) or the header's
+    /// `COMPRESSED` flag (bit 0) is set and the zstd decoder cannot parse
+    /// the compressed data. Common causes: truncated input, corrupt frame,
+    /// or non-zstd data with the flag erroneously set.
+    #[error("zstd decompression failed: {0}")]
+    DecompressFailed(String),
+
+    /// Decompressed data exceeds the safety limit.
+    ///
+    /// Prevents decompression bombs — payloads crafted to decompress into
+    /// vastly larger output. The `limit` is the caller-configured maximum
+    /// (default: 16 MiB per block, 256 MiB for whole-payload).
+    #[error("decompressed size {actual} exceeds limit {limit}")]
+    DecompressionBomb { actual: usize, limit: usize },
+
+    /// A block has the `IS_REFERENCE` flag set but its 32-byte BLAKE3
+    /// hash was not found in the content store.
+    ///
+    /// This means the content was previously content-addressed during
+    /// encoding but the corresponding data was not provided to the
+    /// decoder's content store.
+    #[error("unresolved reference: BLAKE3 hash not found in content store")]
+    UnresolvedReference { hash: [u8; 32] },
+
+    /// A block has the `IS_REFERENCE` flag but no content store was
+    /// provided to the decoder.
+    ///
+    /// Use [`LcpDecoder::decode_with_store`] instead of
+    /// [`LcpDecoder::decode`] when decoding payloads that contain
+    /// content-addressed blocks.
+    #[error("block has IS_REFERENCE flag but no content store was provided")]
+    MissingContentStore,
 
     /// A body deserialization error from `bcp-types`.
     ///

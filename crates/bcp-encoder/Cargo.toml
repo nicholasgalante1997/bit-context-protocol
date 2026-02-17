@@ -6,6 +6,9 @@ edition = "2024"
 [dependencies]
 bcp-wire = { path = "../bcp-wire" }
 bcp-types = { path = "../bcp-types" }
+blake3 = { workspace = true }
 thiserror = { workspace = true }
+zstd = { workspace = true }
 
 [dev-dependencies]
+bcp-decoder = { path = "../bcp-decoder" }

@@ -35,7 +35,7 @@ orchestration (that's `lcp-encoder`/`lcp-decoder`).
 /// ┌──────┬──────────────────┬──────────────────────────────────┐
 /// │ Wire │ Variant          │ Description                      │
 /// ├──────┼──────────────────┼──────────────────────────────────┤
-/// │ 0x01 │ Code             │ Source code with language/path    │
+/// │ 0x01 │ Code             │ Source code with language/path   │
 /// │ 0x02 │ Conversation     │ Chat turn with role              │
 /// │ 0x03 │ FileTree         │ Directory structure              │
 /// │ 0x04 │ ToolResult       │ Tool/MCP output                  │
@@ -82,7 +82,7 @@ wire encoding for compactness.
 /// Wire: single byte. Extensible — unknown values preserved as `Other(u8)`.
 ///
 /// ┌──────┬────────────┐
-/// │ Wire │ Language    │
+/// │ Wire │ Language   │
 /// ├──────┼────────────┤
 /// │ 0x01 │ Rust       │
 /// │ 0x02 │ TypeScript │
