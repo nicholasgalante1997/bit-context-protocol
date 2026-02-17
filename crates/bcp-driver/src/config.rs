@@ -4,8 +4,8 @@ use bcp_types::BlockType;
 ///
 /// Controls how decoded blocks are rendered into model-ready text.
 /// The driver uses these settings to select the output format, apply
-/// model-specific tuning, and filter which block types appear in the
-/// rendered output.
+/// model-specific tuning, filter which block types appear in the
+/// rendered output, and manage token budget constraints.
 ///
 /// ```text
 /// ┌────────────────┬────────────────────────────────────────────────────┐
@@ -14,6 +14,8 @@ use bcp_types::BlockType;
 /// │ mode           │ Selects XML, Markdown, or Minimal output format    │
 /// │ target_model   │ Hints for model-specific formatting adjustments    │
 /// │ include_types  │ Optional allowlist — only render matching blocks   │
+/// │ token_budget   │ Approximate token limit for rendered output        │
+/// │ verbosity      │ Full / Summary / Adaptive rendering mode           │
 /// └────────────────┴────────────────────────────────────────────────────┘
 /// ```
 ///
@@ -21,6 +23,11 @@ use bcp_types::BlockType;
 /// `Annotation`, which is metadata-only and never produces visible output).
 /// When `Some(vec)`, only blocks whose `BlockType` is in the list are
 /// rendered; all others are silently skipped.
+///
+/// When `token_budget` is `Some(n)`, the driver uses a two-pass algorithm
+/// (RFC §5.5) to fit blocks within the budget: high-priority blocks get
+/// full content, while lower-priority blocks degrade to summaries or
+/// placeholders. When `None`, all blocks render with full content.
 pub struct DriverConfig {
     /// Output format mode. Determines the textual structure of the
     /// rendered output.
@@ -34,21 +41,65 @@ pub struct DriverConfig {
     /// Block type filter. When set, only blocks of these types are
     /// rendered; all others are silently skipped.
     pub include_types: Option<Vec<BlockType>>,
+
+    /// Approximate token budget. When set, the driver uses summaries
+    /// and placeholders for low-priority blocks to fit within this
+    /// limit. When `None`, all blocks render with full content.
+    pub token_budget: Option<u32>,
+
+    /// Verbosity mode for budget-aware rendering. Controls whether the
+    /// driver renders full content, summaries, or auto-selects per
+    /// block based on budget and priority.
+    pub verbosity: Verbosity,
 }
 
 impl Default for DriverConfig {
-    /// Default configuration: XML mode, no model hint, no type filter.
+    /// Default configuration: XML mode, no model hint, no type filter,
+    /// no token budget, adaptive verbosity.
     ///
     /// XML mode is the default because it produces the most semantically
     /// structured output — Claude-family models parse it natively, and
-    /// other models handle it well too.
+    /// other models handle it well too. Adaptive verbosity means the
+    /// driver will use the budget engine when a `token_budget` is set,
+    /// and render everything in full otherwise.
     fn default() -> Self {
         Self {
             mode: OutputMode::Xml,
             target_model: None,
             include_types: None,
+            token_budget: None,
+            verbosity: Verbosity::default(),
         }
     }
+}
+
+/// Verbosity modes for budget-aware rendering (RFC §5.5).
+///
+/// Controls how the driver decides between full content and summary
+/// rendering for each block. This interacts with `token_budget`:
+///
+/// ```text
+/// ┌──────────┬────────────────────────────────────────────────────────┐
+/// │ Mode     │ Behavior                                               │
+/// ├──────────┼────────────────────────────────────────────────────────┤
+/// │ Full     │ Always render full content. Ignore budget entirely.    │
+/// │ Summary  │ Always render summaries where available, full content  │
+/// │          │ otherwise. Budget is ignored.                          │
+/// │ Adaptive │ Auto-select per block based on budget + priority.      │
+/// │          │ Without a budget set, behaves like Full.               │
+/// └──────────┴────────────────────────────────────────────────────────┘
+/// ```
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum Verbosity {
+    /// Always render full content, ignoring any token budget.
+    Full,
+    /// Always render summaries where available. Blocks without
+    /// summaries fall back to full content. Budget is ignored.
+    Summary,
+    /// Auto-select per block based on budget and priority. This is the
+    /// default mode. Without a `token_budget`, behaves like `Full`.
+    #[default]
+    Adaptive,
 }
 
 /// Output format modes per RFC §5.4.

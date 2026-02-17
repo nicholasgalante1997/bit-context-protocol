@@ -1,6 +1,9 @@
 use bcp_types::block::{Block, BlockContent};
 
+use crate::budget::RenderDecision;
+use crate::config::OutputMode;
 use crate::error::DriverError;
+use crate::placeholder::render_placeholder;
 use crate::render_xml::{
     content_to_string, data_format_display_name, lang_display_name, media_type_display_name,
     render_file_tree_entries, role_display_name, status_display_name,
@@ -49,9 +52,66 @@ impl MinimalRenderer {
         Ok(parts.join("\n\n"))
     }
 
+    /// Render a filtered slice of blocks with per-block render decisions.
+    ///
+    /// This is the budget-aware entry point. Each block is paired with a
+    /// [`RenderDecision`] that controls rendering. See
+    /// [`XmlRenderer::render_all_with_decisions`] for decision semantics.
+    ///
+    /// No outer wrapper is added.
+    ///
+    /// # Errors
+    ///
+    /// Returns `DriverError::EmptyInput` if all blocks are omitted.
+    /// Returns `DriverError::InvalidContent` if any block contains
+    /// non-UTF-8 content bytes.
+    pub fn render_all_with_decisions(
+        items: &[(&Block, &RenderDecision)],
+    ) -> Result<String, DriverError> {
+        let mut parts = Vec::with_capacity(items.len());
+        for (i, (block, decision)) in items.iter().enumerate() {
+            match decision {
+                RenderDecision::Full => {
+                    parts.push(Self::render_block_inner(block, i, false)?);
+                }
+                RenderDecision::Summary => {
+                    parts.push(Self::render_block_inner(block, i, true)?);
+                }
+                RenderDecision::Placeholder {
+                    block_type,
+                    description,
+                    omitted_tokens,
+                } => {
+                    parts.push(render_placeholder(
+                        OutputMode::Minimal,
+                        block_type,
+                        description,
+                        *omitted_tokens,
+                    ));
+                }
+                RenderDecision::Omit => {}
+            }
+        }
+        if parts.is_empty() {
+            return Err(DriverError::EmptyInput);
+        }
+        Ok(parts.join("\n\n"))
+    }
+
     /// Render a single block using minimal delimiters.
     fn render_block(block: &Block, index: usize) -> Result<String, DriverError> {
         let use_summary = block.summary.is_some();
+        Self::render_block_inner(block, index, use_summary)
+    }
+
+    /// Inner rendering logic shared by `render_block` and the
+    /// decision-aware path.
+    fn render_block_inner(
+        block: &Block,
+        index: usize,
+        use_summary: bool,
+    ) -> Result<String, DriverError> {
+        let use_summary = use_summary && block.summary.is_some();
 
         match &block.content {
             BlockContent::Code(code) => {
@@ -108,9 +168,7 @@ impl MinimalRenderer {
                 Ok(format!("--- diff: {} ---\n{lines}", diff.path))
             }
 
-            BlockContent::EmbeddingRef(emb) => {
-                Ok(format!("[embed-ref: {}]", emb.model))
-            }
+            BlockContent::EmbeddingRef(emb) => Ok(format!("[embed-ref: {}]", emb.model)),
 
             BlockContent::Image(img) => {
                 let media = media_type_display_name(img.media_type);
@@ -142,11 +200,11 @@ impl MinimalRenderer {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use bcp_types::BlockType;
     use bcp_types::block::Block;
     use bcp_types::code::CodeBlock;
     use bcp_types::conversation::ConversationBlock;
     use bcp_types::enums::{Lang, Role};
-    use bcp_types::BlockType;
     use bcp_wire::block_frame::BlockFlags;
 
     #[test]

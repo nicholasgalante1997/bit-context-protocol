@@ -1,7 +1,8 @@
-use bcp_types::block::Block;
 use bcp_types::BlockType;
+use bcp_types::block::Block;
 
-use crate::config::{DriverConfig, OutputMode};
+use crate::budget::{CodeAwareEstimator, RenderDecision, compute_budget_decisions};
+use crate::config::{DriverConfig, OutputMode, Verbosity};
 use crate::error::DriverError;
 use crate::render_markdown::MarkdownRenderer;
 use crate::render_minimal::MinimalRenderer;
@@ -13,7 +14,7 @@ use crate::render_xml::XmlRenderer;
 /// `bcp-decoder`) into a string that can be injected into an LLM's context
 /// window. The driver is not a simple serializer — it is an opinionated
 /// renderer that makes decisions about how to present context to maximize
-/// model comprehension.
+/// model comprehension within a token budget.
 ///
 /// The trait takes an immutable block slice and a configuration reference,
 /// returning either the rendered text or a `DriverError`. Implementations
@@ -24,7 +25,7 @@ use crate::render_xml::XmlRenderer;
 /// Vec<Block> ──▶ LcpDriver::render() ──▶ model-ready String
 ///                        │
 ///                  DriverConfig
-///                  (mode, target_model, include_types)
+///                  (mode, verbosity, token_budget, ...)
 /// ```
 pub trait LcpDriver {
     /// Render a complete set of decoded blocks into model-ready text.
@@ -36,66 +37,103 @@ pub trait LcpDriver {
     fn render(&self, blocks: &[Block], config: &DriverConfig) -> Result<String, DriverError>;
 }
 
-/// Default driver implementation that dispatches to the appropriate
-/// renderer based on the configured output mode.
+/// Default driver implementation — filtering, budget allocation, and
+/// renderer dispatch.
 ///
 /// This is the standard entry point for rendering. It handles:
 ///
-/// 1. **Block filtering** — applies `config.include_types` to skip
-///    non-matching blocks before any rendering occurs.
-/// 2. **Annotation suppression** — `Annotation` blocks are metadata-only
-///    and are never rendered as visible text, regardless of filter settings.
+/// 1. **Block filtering** — removes Annotation/End blocks and applies
+///    `config.include_types` to skip non-matching blocks.
+/// 2. **Budget decisions** — based on `config.verbosity` and
+///    `config.token_budget`, computes a [`RenderDecision`] per block
+///    (Full, Summary, Placeholder, or Omit).
 /// 3. **Renderer dispatch** — selects `XmlRenderer`, `MarkdownRenderer`,
-///    or `MinimalRenderer` based on `config.mode`.
-/// 4. **Output assembly** — joins rendered block strings with appropriate
-///    separators (newlines for all modes; `<context>` wrapper for XML).
+///    or `MinimalRenderer` based on `config.mode`, using the
+///    decision-aware rendering path.
 ///
 /// ```text
-/// ┌─────────────┐     ┌──────────────┐     ┌──────────────────┐
-/// │ &[Block]    │────▶│ filter +     │────▶│ XmlRenderer      │
-/// │             │     │ dispatch     │     │ MarkdownRenderer │
-/// │             │     │              │     │ MinimalRenderer  │
-/// └─────────────┘     └──────────────┘     └──────────────────┘
+/// ┌─────────────┐     ┌───────────────┐     ┌──────────────────┐
+/// │ &[Block]    │────▶│ filter +      │────▶│ XmlRenderer      │
+/// │             │     │ budget engine │     │ MarkdownRenderer │
+/// │             │     │ + dispatch    │     │ MinimalRenderer  │
+/// └─────────────┘     └───────────────┘     └──────────────────┘
 ///                           │                       │
 ///                     DriverConfig            String output
+///                     (mode, verbosity,
+///                      token_budget, ...)
 /// ```
 pub struct DefaultDriver;
 
 impl LcpDriver for DefaultDriver {
     /// Render decoded blocks into model-ready text.
     ///
+    /// The rendering pipeline:
+    ///
+    /// 1. Filter: remove Annotation/End blocks, apply `include_types`.
+    /// 2. Decide: compute per-block [`RenderDecision`] based on verbosity
+    ///    and token budget.
+    /// 3. Render: dispatch to the appropriate renderer with decisions.
+    ///
     /// # Errors
     ///
     /// - `DriverError::EmptyInput` if no renderable blocks remain after filtering.
     /// - `DriverError::InvalidContent` if a block contains non-UTF-8 bytes.
     fn render(&self, blocks: &[Block], config: &DriverConfig) -> Result<String, DriverError> {
-        let filtered: Vec<&Block> = blocks
-            .iter()
-            .filter(|b| {
-                // Annotation blocks are metadata-only — never rendered
-                if b.block_type == BlockType::Annotation {
-                    return false;
-                }
-                // End blocks are sentinels — never rendered
-                if b.block_type == BlockType::End {
-                    return false;
-                }
-                // Apply include_types filter if set
-                if let Some(ref types) = config.include_types {
-                    return types.contains(&b.block_type);
-                }
-                true
-            })
-            .collect();
+        // Step 1: Filter blocks, tracking original indices for annotation mapping
+        let mut filtered: Vec<&Block> = Vec::new();
+        let mut original_indices: Vec<usize> = Vec::new();
+
+        for (i, b) in blocks.iter().enumerate() {
+            if b.block_type == BlockType::Annotation || b.block_type == BlockType::End {
+                continue;
+            }
+            if let Some(ref types) = config.include_types
+                && !types.contains(&b.block_type)
+            {
+                continue;
+            }
+            filtered.push(b);
+            original_indices.push(i);
+        }
 
         if filtered.is_empty() {
             return Err(DriverError::EmptyInput);
         }
 
+        // Step 2: Compute render decisions
+        let decisions = match (config.token_budget, config.verbosity) {
+            // Summary mode (with or without budget): summaries where available
+            (_, Verbosity::Summary) => filtered
+                .iter()
+                .map(|b| {
+                    if b.summary.is_some() {
+                        RenderDecision::Summary
+                    } else {
+                        RenderDecision::Full
+                    }
+                })
+                .collect(),
+            // Budget + Adaptive: run the full budget engine
+            (Some(budget), Verbosity::Adaptive) => compute_budget_decisions(
+                blocks,
+                &filtered,
+                &original_indices,
+                budget,
+                &CodeAwareEstimator,
+            ),
+            // All other cases: render everything in full
+            // (no budget, or Full verbosity regardless of budget)
+            _ => vec![RenderDecision::Full; filtered.len()],
+        };
+
+        // Step 3: Build (block, decision) pairs and dispatch to renderer
+        let items: Vec<(&Block, &RenderDecision)> =
+            filtered.iter().copied().zip(decisions.iter()).collect();
+
         match config.mode {
-            OutputMode::Xml => XmlRenderer::render_all(&filtered),
-            OutputMode::Markdown => MarkdownRenderer::render_all(&filtered),
-            OutputMode::Minimal => MinimalRenderer::render_all(&filtered),
+            OutputMode::Xml => XmlRenderer::render_all_with_decisions(&items),
+            OutputMode::Markdown => MarkdownRenderer::render_all_with_decisions(&items),
+            OutputMode::Minimal => MinimalRenderer::render_all_with_decisions(&items),
         }
     }
 }
@@ -171,8 +209,8 @@ mod tests {
         let driver = DefaultDriver;
         let config = DriverConfig {
             mode: OutputMode::Minimal,
-            target_model: None,
             include_types: Some(vec![BlockType::Code]),
+            ..DriverConfig::default()
         };
         let blocks = vec![
             code_block(Lang::Rust, "main.rs", b"fn main() {}"),
@@ -188,8 +226,8 @@ mod tests {
         let driver = DefaultDriver;
         let config = DriverConfig {
             mode: OutputMode::Xml,
-            target_model: None,
             include_types: Some(vec![BlockType::Diff]),
+            ..DriverConfig::default()
         };
         let blocks = vec![code_block(Lang::Rust, "main.rs", b"fn main() {}")];
         let result = driver.render(&blocks, &config);
@@ -201,8 +239,7 @@ mod tests {
         let driver = DefaultDriver;
         let config = DriverConfig {
             mode: OutputMode::Xml,
-            target_model: None,
-            include_types: None,
+            ..DriverConfig::default()
         };
         let blocks = vec![code_block(Lang::Rust, "main.rs", b"fn main() {}")];
         let result = driver.render(&blocks, &config).unwrap();
@@ -215,8 +252,7 @@ mod tests {
         let driver = DefaultDriver;
         let config = DriverConfig {
             mode: OutputMode::Markdown,
-            target_model: None,
-            include_types: None,
+            ..DriverConfig::default()
         };
         let blocks = vec![code_block(Lang::Rust, "main.rs", b"fn main() {}")];
         let result = driver.render(&blocks, &config).unwrap();
@@ -229,8 +265,7 @@ mod tests {
         let driver = DefaultDriver;
         let config = DriverConfig {
             mode: OutputMode::Minimal,
-            target_model: None,
-            include_types: None,
+            ..DriverConfig::default()
         };
         let blocks = vec![code_block(Lang::Rust, "main.rs", b"fn main() {}")];
         let result = driver.render(&blocks, &config).unwrap();
@@ -242,8 +277,7 @@ mod tests {
         let driver = DefaultDriver;
         let config = DriverConfig {
             mode: OutputMode::Xml,
-            target_model: None,
-            include_types: None,
+            ..DriverConfig::default()
         };
         let blocks = vec![
             code_block(Lang::Rust, "src/main.rs", b"fn main() {}"),
@@ -261,8 +295,7 @@ mod tests {
         let driver = DefaultDriver;
         let config = DriverConfig {
             mode: OutputMode::Xml,
-            target_model: None,
-            include_types: None,
+            ..DriverConfig::default()
         };
         let blocks = vec![Block {
             block_type: BlockType::FileTree,
@@ -348,7 +381,7 @@ mod tests {
     }
 
     #[test]
-    fn summary_replaces_content_all_modes() {
+    fn summary_replaces_content_with_summary_verbosity() {
         let driver = DefaultDriver;
         let blocks = vec![Block {
             block_type: BlockType::Code,
@@ -367,6 +400,7 @@ mod tests {
         for mode in [OutputMode::Xml, OutputMode::Markdown, OutputMode::Minimal] {
             let config = DriverConfig {
                 mode,
+                verbosity: Verbosity::Summary,
                 ..DriverConfig::default()
             };
             let result = driver.render(&blocks, &config).unwrap();
@@ -379,6 +413,35 @@ mod tests {
                 "mode {mode:?} should not contain full content"
             );
         }
+    }
+
+    #[test]
+    fn adaptive_without_budget_renders_full_content() {
+        let driver = DefaultDriver;
+        let blocks = vec![Block {
+            block_type: BlockType::Code,
+            flags: BlockFlags::NONE,
+            summary: Some(Summary {
+                text: "Entry point with CLI parsing.".to_string(),
+            }),
+            content: BlockContent::Code(CodeBlock {
+                lang: Lang::Rust,
+                path: "src/main.rs".to_string(),
+                content: b"fn main() { /* very long implementation */ }".to_vec(),
+                line_range: None,
+            }),
+        }];
+
+        // Adaptive without budget → Full rendering (summary ignored)
+        let config = DriverConfig {
+            mode: OutputMode::Xml,
+            ..DriverConfig::default()
+        };
+        let result = driver.render(&blocks, &config).unwrap();
+        assert!(
+            result.contains("very long implementation"),
+            "Adaptive without budget should render full content"
+        );
     }
 
     #[test]
