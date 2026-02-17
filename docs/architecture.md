@@ -42,7 +42,7 @@ bcp-encoder    bcp-decoder    (both depend on bcp-wire + bcp-types)
    │              │
    └──────┬───────┘
           ▼
-      lcp-driver              (depends on bcp-types, bcp-decoder)
+      bcp-driver              (depends on bcp-wire + bcp-types)
           │
           ▼
        lcp-cli                (depends on all crates)
@@ -53,7 +53,7 @@ bcp-encoder    bcp-decoder    (both depend on bcp-wire + bcp-types)
 | Phase | Specs | Crates | Goal |
 |-------|-------|--------|------|
 | **1. Foundation** | SPEC_01, 02, 03 | `bcp-wire`, `bcp-types`, `bcp-encoder` | Binary wire format + encoding |
-| **2. Decode & Render** | SPEC_04, 05 | `bcp-decoder`, `lcp-driver` | Read payloads, render as text |
+| **2. Decode & Render** | SPEC_04, 05 | `bcp-decoder`, `bcp-driver` | Read payloads, render as text |
 | **3. Advanced** | SPEC_06, 07, 08 | Modifications to existing crates | Compression, dedup, budget engine |
 | **4. Tooling** | SPEC_09, 10 | `lcp-cli`, `tests/` | CLI binary + golden file tests |
 

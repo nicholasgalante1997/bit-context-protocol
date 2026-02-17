@@ -62,6 +62,18 @@ Payload parsing errors. Raised by both sync and streaming decoders.
 
 ---
 
+## bcp-driver: `DriverError`
+
+Rendering errors. Raised when the driver cannot produce valid output from decoded blocks.
+
+| Variant | Trigger | Context |
+|---------|---------|---------|
+| `EmptyInput` | No renderable blocks remain after filtering | All blocks were Annotation/End, or `include_types` excluded everything |
+| `UnsupportedBlockType { block_type }` | Block type cannot be rendered (reserved) | Future block types not yet supported by the renderer |
+| `InvalidContent { block_index }` | Block body contains invalid UTF-8 | Binary content passed to a text renderer |
+
+---
+
 ## Error Propagation
 
 ```
@@ -70,6 +82,8 @@ WireError ──┬──▶ TypeError ──▶ DecodeError
             └──▶ EncodeError       │
                                    │
             io::Error ─────────────┘
+
+DecodeError ──▶ Vec<Block> ──▶ DriverError
 ```
 
-All errors use `#[from]` for automatic `?` conversion. Wire errors propagate transparently through the stack.
+All errors use `#[from]` for automatic `?` conversion. Wire errors propagate transparently through the stack. Driver errors are independent — they don't wrap upstream errors because the driver operates on already-decoded blocks.

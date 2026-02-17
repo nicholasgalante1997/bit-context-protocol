@@ -1,0 +1,13 @@
+[package]
+name = "bcp-driver"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+bcp-types = { path = "../bcp-types" }
+bcp-wire = { path = "../bcp-wire" }
+thiserror = { workspace = true }
+
+[dev-dependencies]
+bcp-encoder = { path = "../bcp-encoder" }
+bcp-decoder = { path = "../bcp-decoder" }

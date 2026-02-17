@@ -14,6 +14,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "bcp-driver"
+version = "0.1.0"
+dependencies = [
+ "bcp-decoder",
+ "bcp-encoder",
+ "bcp-types",
+ "bcp-wire",
+ "thiserror",
+]
+
+[[package]]
 name = "bcp-encoder"
 version = "0.1.0"
 dependencies = [
