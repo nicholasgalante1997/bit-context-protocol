@@ -1,0 +1,88 @@
+[tools]
+bun = "1.3.9"
+rust = "1.93.0"
+
+[env]
+CARGO_TERM_COLOR = "always"
+
+# ── Build ────────────────────────────────────────────────────────────────────
+
+[tasks.build]
+description = "Build all workspace crates"
+run = "cargo build --workspace"
+
+[tasks."build:release"]
+description = "Build all workspace crates in release mode"
+run = "cargo build --workspace --release"
+
+# ── Test ─────────────────────────────────────────────────────────────────────
+
+[tasks.test]
+description = "Run all workspace tests"
+run = "cargo test --workspace"
+
+[tasks."test:wire"]
+description = "Run bcp-wire tests"
+run = "cargo test -p bcp-wire"
+
+[tasks."test:types"]
+description = "Run bcp-types tests"
+run = "cargo test -p bcp-types"
+
+[tasks."test:encoder"]
+description = "Run bcp-encoder tests"
+run = "cargo test -p bcp-encoder"
+
+[tasks."test:decoder"]
+description = "Run bcp-decoder tests"
+run = "cargo test -p bcp-decoder"
+
+# ── Lint ─────────────────────────────────────────────────────────────────────
+
+[tasks.clippy]
+description = "Run clippy with pedantic lints on all crates"
+run = "cargo clippy --workspace -- -W clippy::pedantic"
+
+[tasks.fmt]
+description = "Format all Rust source files"
+run = "cargo fmt --all"
+
+[tasks."fmt:check"]
+description = "Check formatting without modifying files"
+run = "cargo fmt --all -- --check"
+
+# ── Check (fast compile check, no codegen) ───────────────────────────────────
+
+[tasks.check]
+description = "Type-check all workspace crates"
+run = "cargo check --workspace"
+
+# ── Docs ─────────────────────────────────────────────────────────────────────
+
+[tasks.doc]
+description = "Generate rustdoc for all workspace crates"
+run = "cargo doc --workspace --no-deps"
+
+[tasks."doc:open"]
+description = "Generate and open rustdoc in browser"
+run = "cargo doc --workspace --no-deps --open"
+
+[tasks."docsite:serve"]
+description = "Serve the docsify documentation site on port 3000"
+run = "bunx serve -p 4040 ./docs"
+
+# ── CI (composite) ──────────────────────────────────────────────────────────
+
+[tasks.ci]
+description = "Run the full CI pipeline: fmt check, clippy, test"
+run = """
+cargo fmt --all -- --check
+cargo clippy --workspace -- -W clippy::pedantic
+cargo test --workspace
+"""
+
+# ── Clean ────────────────────────────────────────────────────────────────────
+
+[tasks.clean]
+description = "Remove build artifacts"
+run = "cargo clean"

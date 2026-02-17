@@ -135,9 +135,10 @@ impl BlockFrame {
         let mut cursor = 0;
 
         // 1. Block type (varint)
-        let (block_type_raw, n) = decode_varint(buf.get(cursor..).ok_or(
-            WireError::UnexpectedEof { offset: cursor },
-        )?)?;
+        let (block_type_raw, n) = decode_varint(
+            buf.get(cursor..)
+                .ok_or(WireError::UnexpectedEof { offset: cursor })?,
+        )?;
         cursor += n;
 
         let block_type = block_type_raw as u8;
@@ -148,16 +149,17 @@ impl BlockFrame {
         }
 
         // 2. Flags (single byte)
-        let flags_byte = *buf.get(cursor).ok_or(
-            WireError::UnexpectedEof { offset: cursor },
-        )?;
+        let flags_byte = *buf
+            .get(cursor)
+            .ok_or(WireError::UnexpectedEof { offset: cursor })?;
         cursor += 1;
         let flags = BlockFlags::from_raw(flags_byte);
 
         // 3. Content length (varint)
-        let (content_len, n) = decode_varint(buf.get(cursor..).ok_or(
-            WireError::UnexpectedEof { offset: cursor },
-        )?)?;
+        let (content_len, n) = decode_varint(
+            buf.get(cursor..)
+                .ok_or(WireError::UnexpectedEof { offset: cursor })?,
+        )?;
         cursor += n;
 
         let content_len = content_len as usize;
@@ -300,8 +302,7 @@ mod tests {
         assert_eq!(parsed1, frame1);
 
         // Read second frame starting where the first ended
-        let (parsed2, consumed2) =
-            BlockFrame::read_from(&buf[consumed1..]).unwrap().unwrap();
+        let (parsed2, consumed2) = BlockFrame::read_from(&buf[consumed1..]).unwrap().unwrap();
         assert_eq!(parsed2, frame2);
         assert_eq!(consumed1 + consumed2, buf.len());
     }

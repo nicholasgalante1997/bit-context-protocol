@@ -18,18 +18,18 @@ use bcp_wire::WireError;
 /// ```
 #[derive(Debug, thiserror::Error)]
 pub enum EncodeError {
-  #[error("no blocks have been added to the encoder")]
-  EmptyPayload,
+    #[error("no blocks have been added to the encoder")]
+    EmptyPayload,
 
-  #[error("block body exceeds maximum size ({size} bytes, limit {limit})")]
-  BlockTooLarge { size: usize, limit: usize },
+    #[error("block body exceeds maximum size ({size} bytes, limit {limit})")]
+    BlockTooLarge { size: usize, limit: usize },
 
-  #[error("with_summary called but no blocks have been added yet")]
-  InvalidSummaryTarget,
+    #[error("with_summary called but no blocks have been added yet")]
+    InvalidSummaryTarget,
 
-  #[error(transparent)]
-  Wire(#[from] WireError),
+    #[error(transparent)]
+    Wire(#[from] WireError),
 
-  #[error(transparent)]
-  Io(#[from] std::io::Error),
+    #[error(transparent)]
+    Io(#[from] std::io::Error),
 }

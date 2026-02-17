@@ -2,7 +2,7 @@ use bcp_types::block::{Block, BlockContent};
 use bcp_types::block_type::BlockType;
 use bcp_types::summary::Summary;
 use bcp_wire::block_frame::BlockFrame;
-use bcp_wire::header::{LcpHeader, HEADER_SIZE};
+use bcp_wire::header::{HEADER_SIZE, LcpHeader};
 
 use crate::error::DecodeError;
 
@@ -20,15 +20,15 @@ use crate::error::DecodeError;
 /// └──────────────────────────────────────────────────┘
 /// ```
 pub struct DecodedPayload {
-  /// The parsed file header (magic validated, version checked).
-  pub header: LcpHeader,
+    /// The parsed file header (magic validated, version checked).
+    pub header: LcpHeader,
 
-  /// Ordered sequence of blocks, excluding the END sentinel.
-  ///
-  /// Block ordering matches the wire order. Annotation blocks
-  /// appear at whatever position the encoder placed them, with
-  /// `target_block_id` referencing earlier blocks by index.
-  pub blocks: Vec<Block>,
+    /// Ordered sequence of blocks, excluding the END sentinel.
+    ///
+    /// Block ordering matches the wire order. Annotation blocks
+    /// appear at whatever position the encoder placed them, with
+    /// `target_block_id` referencing earlier blocks by index.
+    pub blocks: Vec<Block>,
 }
 
 /// Synchronous LCP decoder — parses a complete in-memory payload.
@@ -72,589 +72,599 @@ pub struct DecodedPayload {
 pub struct LcpDecoder;
 
 impl LcpDecoder {
-  /// Decode a complete LCP payload from a byte slice.
-  ///
-  /// Returns a [`DecodedPayload`] containing the header and an ordered
-  /// `Vec<Block>` (excluding the END sentinel).
-  ///
-  /// # Errors
-  ///
-  /// - [`DecodeError::InvalidHeader`] if the magic, version, or reserved
-  ///   byte is wrong.
-  /// - [`DecodeError::Wire`] if a block frame is malformed.
-  /// - [`DecodeError::Type`] if a block body fails TLV deserialization.
-  /// - [`DecodeError::MissingEndSentinel`] if the payload ends without an
-  ///   END block.
-  /// - [`DecodeError::TrailingData`] if extra bytes follow the END
-  ///   sentinel.
-  pub fn decode(payload: &[u8]) -> Result<DecodedPayload, DecodeError> {
-    // 1. Parse the 8-byte header.
-    let header =
-      LcpHeader::read_from(payload).map_err(DecodeError::InvalidHeader)?;
+    /// Decode a complete LCP payload from a byte slice.
+    ///
+    /// Returns a [`DecodedPayload`] containing the header and an ordered
+    /// `Vec<Block>` (excluding the END sentinel).
+    ///
+    /// # Errors
+    ///
+    /// - [`DecodeError::InvalidHeader`] if the magic, version, or reserved
+    ///   byte is wrong.
+    /// - [`DecodeError::Wire`] if a block frame is malformed.
+    /// - [`DecodeError::Type`] if a block body fails TLV deserialization.
+    /// - [`DecodeError::MissingEndSentinel`] if the payload ends without an
+    ///   END block.
+    /// - [`DecodeError::TrailingData`] if extra bytes follow the END
+    ///   sentinel.
+    pub fn decode(payload: &[u8]) -> Result<DecodedPayload, DecodeError> {
+        // 1. Parse the 8-byte header.
+        let header = LcpHeader::read_from(payload).map_err(DecodeError::InvalidHeader)?;
 
-    let mut cursor = HEADER_SIZE;
-    let mut blocks = Vec::new();
-    let mut found_end = false;
+        let mut cursor = HEADER_SIZE;
+        let mut blocks = Vec::new();
+        let mut found_end = false;
 
-    // 2. Read block frames until END sentinel or EOF.
-    while cursor < payload.len() {
-      let remaining = &payload[cursor..];
+        // 2. Read block frames until END sentinel or EOF.
+        while cursor < payload.len() {
+            let remaining = &payload[cursor..];
 
-      if let Some((frame, consumed)) = BlockFrame::read_from(remaining)? {
-        let block = Self::decode_block_frame(&frame)?;
-        blocks.push(block);
-        cursor += consumed;
-      } else {
-        // END sentinel encountered. BlockFrame::read_from returns
-        // None for type=0xFF. Account for the END frame bytes:
-        // varint(0xFF) = [0xFF, 0x01] + flags(0x00) + content_len(0x00) = 4 bytes.
-        // But we need to calculate the actual size consumed by the
-        // END sentinel's varint encoding.
-        found_end = true;
-        cursor += Self::end_sentinel_size(remaining)?;
-        break;
-      }
+            if let Some((frame, consumed)) = BlockFrame::read_from(remaining)? {
+                let block = Self::decode_block_frame(&frame)?;
+                blocks.push(block);
+                cursor += consumed;
+            } else {
+                // END sentinel encountered. BlockFrame::read_from returns
+                // None for type=0xFF. Account for the END frame bytes:
+                // varint(0xFF) = [0xFF, 0x01] + flags(0x00) + content_len(0x00) = 4 bytes.
+                // But we need to calculate the actual size consumed by the
+                // END sentinel's varint encoding.
+                found_end = true;
+                cursor += Self::end_sentinel_size(remaining)?;
+                break;
+            }
+        }
+
+        // 3. Validate termination.
+        if !found_end {
+            return Err(DecodeError::MissingEndSentinel);
+        }
+
+        if cursor < payload.len() {
+            return Err(DecodeError::TrailingData {
+                extra_bytes: payload.len() - cursor,
+            });
+        }
+
+        Ok(DecodedPayload { header, blocks })
     }
 
-    // 3. Validate termination.
-    if !found_end {
-      return Err(DecodeError::MissingEndSentinel);
+    /// Decode a single block from a `BlockFrame`.
+    ///
+    /// Handles summary extraction when the `HAS_SUMMARY` flag is set:
+    /// the summary occupies the front of the body (length-prefixed UTF-8),
+    /// followed by the TLV fields that [`BlockContent::decode_body`]
+    /// expects.
+    fn decode_block_frame(frame: &BlockFrame) -> Result<Block, DecodeError> {
+        let block_type = BlockType::from_wire_id(frame.block_type);
+        let mut body = frame.body.as_slice();
+        let mut summary = None;
+
+        // If HAS_SUMMARY is set, the body starts with a length-prefixed
+        // summary string. Extract it and advance past it.
+        if frame.flags.has_summary() {
+            let (sum, consumed) = Summary::decode(body)?;
+            summary = Some(sum);
+            body = &body[consumed..];
+        }
+
+        let content = BlockContent::decode_body(&block_type, body)?;
+
+        Ok(Block {
+            block_type,
+            flags: frame.flags,
+            summary,
+            content,
+        })
     }
 
-    if cursor < payload.len() {
-      return Err(DecodeError::TrailingData {
-        extra_bytes: payload.len() - cursor,
-      });
+    /// Calculate the byte size of the END sentinel in the wire format.
+    ///
+    /// The END sentinel is:
+    ///   - `block_type` = 0xFF, encoded as varint → `[0xFF, 0x01]` (2 bytes)
+    ///   - `flags` = 0x00 (1 byte)
+    ///   - `content_len` = 0, encoded as varint → `[0x00]` (1 byte)
+    ///
+    /// Total: 4 bytes. However, we compute this from the wire rather
+    /// than hardcoding, in case future encoders use a different varint
+    /// encoding width.
+    fn end_sentinel_size(buf: &[u8]) -> Result<usize, DecodeError> {
+        // Read the block_type varint (0xFF)
+        let (_, type_len) = bcp_wire::varint::decode_varint(buf)?;
+        let mut size = type_len;
+
+        // flags byte
+        size += 1;
+
+        // content_len varint (should be 0)
+        let flags_and_len = &buf[size..];
+        if flags_and_len.is_empty() {
+            return Err(DecodeError::Wire(bcp_wire::WireError::UnexpectedEof {
+                offset: size,
+            }));
+        }
+        let (_, len_size) = bcp_wire::varint::decode_varint(flags_and_len)?;
+        size += len_size;
+
+        Ok(size)
     }
-
-    Ok(DecodedPayload { header, blocks })
-  }
-
-  /// Decode a single block from a `BlockFrame`.
-  ///
-  /// Handles summary extraction when the `HAS_SUMMARY` flag is set:
-  /// the summary occupies the front of the body (length-prefixed UTF-8),
-  /// followed by the TLV fields that [`BlockContent::decode_body`]
-  /// expects.
-  fn decode_block_frame(frame: &BlockFrame) -> Result<Block, DecodeError> {
-    let block_type = BlockType::from_wire_id(frame.block_type);
-    let mut body = frame.body.as_slice();
-    let mut summary = None;
-
-    // If HAS_SUMMARY is set, the body starts with a length-prefixed
-    // summary string. Extract it and advance past it.
-    if frame.flags.has_summary() {
-      let (sum, consumed) = Summary::decode(body)?;
-      summary = Some(sum);
-      body = &body[consumed..];
-    }
-
-    let content = BlockContent::decode_body(&block_type, body)?;
-
-    Ok(Block {
-      block_type,
-      flags: frame.flags,
-      summary,
-      content,
-    })
-  }
-
-  /// Calculate the byte size of the END sentinel in the wire format.
-  ///
-  /// The END sentinel is:
-  ///   - `block_type` = 0xFF, encoded as varint → `[0xFF, 0x01]` (2 bytes)
-  ///   - `flags` = 0x00 (1 byte)
-  ///   - `content_len` = 0, encoded as varint → `[0x00]` (1 byte)
-  ///
-  /// Total: 4 bytes. However, we compute this from the wire rather
-  /// than hardcoding, in case future encoders use a different varint
-  /// encoding width.
-  fn end_sentinel_size(buf: &[u8]) -> Result<usize, DecodeError> {
-    // Read the block_type varint (0xFF)
-    let (_, type_len) = bcp_wire::varint::decode_varint(buf)?;
-    let mut size = type_len;
-
-    // flags byte
-    size += 1;
-
-    // content_len varint (should be 0)
-    let flags_and_len = &buf[size..];
-    if flags_and_len.is_empty() {
-      return Err(DecodeError::Wire(bcp_wire::WireError::UnexpectedEof {
-        offset: size,
-      }));
-    }
-    let (_, len_size) =
-      bcp_wire::varint::decode_varint(flags_and_len)?;
-    size += len_size;
-
-    Ok(size)
-  }
 }
 
 #[cfg(test)]
 mod tests {
-  use super::*;
-  use bcp_encoder::LcpEncoder;
-  use bcp_types::diff::DiffHunk;
-  use bcp_types::enums::{
-    AnnotationKind, DataFormat, FormatHint, Lang, MediaType, Priority, Role, Status,
-  };
-  use bcp_types::file_tree::{FileEntry, FileEntryKind};
-  use bcp_wire::block_frame::BlockFlags;
-
-  // ── Round-trip helpers ────────────────────────────────────────────────
-
-  /// Encode with `LcpEncoder`, decode with `LcpDecoder`, return blocks.
-  fn roundtrip(encoder: &LcpEncoder) -> DecodedPayload {
-    let payload = encoder.encode().unwrap();
-    LcpDecoder::decode(&payload).unwrap()
-  }
-
-  // ── Acceptance criteria tests ─────────────────────────────────────────
-
-  #[test]
-  fn decode_parses_encoder_output() {
-    let payload = LcpEncoder::new()
-      .add_code(Lang::Rust, "main.rs", b"fn main() {}")
-      .encode()
-      .unwrap();
-
-    let decoded = LcpDecoder::decode(&payload).unwrap();
-    assert_eq!(decoded.blocks.len(), 1);
-    assert_eq!(decoded.header.version_major, 1);
-    assert_eq!(decoded.header.version_minor, 0);
-  }
-
-  #[test]
-  fn roundtrip_single_code_block() {
-    let decoded = roundtrip(
-      LcpEncoder::new().add_code(Lang::Rust, "lib.rs", b"pub fn hello() {}"),
-    );
-
-    assert_eq!(decoded.blocks.len(), 1);
-    let block = &decoded.blocks[0];
-    assert_eq!(block.block_type, BlockType::Code);
-    assert!(block.summary.is_none());
-
-    match &block.content {
-      BlockContent::Code(code) => {
-        assert_eq!(code.lang, Lang::Rust);
-        assert_eq!(code.path, "lib.rs");
-        assert_eq!(code.content, b"pub fn hello() {}");
-        assert!(code.line_range.is_none());
-      }
-      other => panic!("expected Code, got {other:?}"),
-    }
-  }
-
-  #[test]
-  fn roundtrip_multiple_block_types() {
-    let decoded = roundtrip(
-      LcpEncoder::new()
-        .add_code(Lang::Python, "app.py", b"print('hi')")
-        .add_conversation(Role::User, b"What is this?")
-        .add_conversation(Role::Assistant, b"A greeting script.")
-        .add_tool_result("pytest", Status::Ok, b"1 passed")
-        .add_document("README", b"# Hello", FormatHint::Markdown),
-    );
-
-    assert_eq!(decoded.blocks.len(), 5);
-
-    // Verify type ordering matches encoder order
-    let types: Vec<_> = decoded.blocks.iter().map(|b| b.block_type.clone()).collect();
-    assert_eq!(
-      types,
-      vec![
-        BlockType::Code,
-        BlockType::Conversation,
-        BlockType::Conversation,
-        BlockType::ToolResult,
-        BlockType::Document,
-      ]
-    );
-  }
-
-  #[test]
-  fn roundtrip_with_summary() {
-    let decoded = roundtrip(
-      LcpEncoder::new()
-        .add_code(Lang::Rust, "main.rs", b"fn main() {}")
-        .with_summary("Application entry point."),
-    );
-
-    assert_eq!(decoded.blocks.len(), 1);
-    let block = &decoded.blocks[0];
-    assert!(block.flags.has_summary());
-    assert_eq!(
-      block.summary.as_ref().unwrap().text,
-      "Application entry point."
-    );
-
-    // The content should still decode correctly
-    match &block.content {
-      BlockContent::Code(code) => {
-        assert_eq!(code.path, "main.rs");
-      }
-      other => panic!("expected Code, got {other:?}"),
-    }
-  }
-
-  #[test]
-  fn roundtrip_with_priority_annotation() {
-    let decoded = roundtrip(
-      LcpEncoder::new()
-        .add_code(Lang::Rust, "lib.rs", b"// code")
-        .with_priority(Priority::High),
-    );
-
-    // Encoder produces CODE + ANNOTATION blocks
-    assert_eq!(decoded.blocks.len(), 2);
-    assert_eq!(decoded.blocks[0].block_type, BlockType::Code);
-    assert_eq!(decoded.blocks[1].block_type, BlockType::Annotation);
-
-    match &decoded.blocks[1].content {
-      BlockContent::Annotation(ann) => {
-        assert_eq!(ann.target_block_id, 0);
-        assert_eq!(ann.kind, AnnotationKind::Priority);
-        assert_eq!(ann.value, vec![Priority::High.to_wire_byte()]);
-      }
-      other => panic!("expected Annotation, got {other:?}"),
-    }
-  }
-
-  #[test]
-  fn roundtrip_all_block_types() {
-    let decoded = roundtrip(
-      LcpEncoder::new()
-        .add_code(Lang::Rust, "main.rs", b"fn main() {}")
-        .add_conversation(Role::User, b"hello")
-        .add_file_tree(
-          "/project",
-          vec![FileEntry {
-            name: "lib.rs".to_string(),
-            kind: FileEntryKind::File,
-            size: 100,
-            children: vec![],
-          }],
-        )
-        .add_tool_result("rg", Status::Ok, b"3 matches")
-        .add_document("README", b"# Title", FormatHint::Markdown)
-        .add_structured_data(DataFormat::Json, b"{\"key\": \"val\"}")
-        .add_diff(
-          "src/lib.rs",
-          vec![DiffHunk {
-            old_start: 1,
-            new_start: 1,
-            lines: b"+new line\n".to_vec(),
-          }],
-        )
-        .add_annotation(0, AnnotationKind::Tag, b"important")
-        .add_image(MediaType::Png, "screenshot", b"\x89PNG")
-        .add_extension("myco", "custom", b"data"),
-    );
-
-    assert_eq!(decoded.blocks.len(), 10);
-    let types: Vec<_> = decoded.blocks.iter().map(|b| b.block_type.clone()).collect();
-    assert_eq!(
-      types,
-      vec![
-        BlockType::Code,
-        BlockType::Conversation,
-        BlockType::FileTree,
-        BlockType::ToolResult,
-        BlockType::Document,
-        BlockType::StructuredData,
-        BlockType::Diff,
-        BlockType::Annotation,
-        BlockType::Image,
-        BlockType::Extension,
-      ]
-    );
-  }
-
-  #[test]
-  fn roundtrip_code_with_line_range() {
-    let decoded = roundtrip(
-      LcpEncoder::new().add_code_range(Lang::Rust, "lib.rs", b"fn foo() {}", 10, 20),
-    );
-
-    match &decoded.blocks[0].content {
-      BlockContent::Code(code) => {
-        assert_eq!(code.line_range, Some((10, 20)));
-      }
-      other => panic!("expected Code, got {other:?}"),
-    }
-  }
-
-  #[test]
-  fn roundtrip_conversation_with_tool_call_id() {
-    let decoded = roundtrip(
-      LcpEncoder::new().add_conversation_tool(Role::Tool, b"result", "call_abc"),
-    );
-
-    match &decoded.blocks[0].content {
-      BlockContent::Conversation(conv) => {
-        assert_eq!(conv.tool_call_id.as_deref(), Some("call_abc"));
-      }
-      other => panic!("expected Conversation, got {other:?}"),
-    }
-  }
-
-  #[test]
-  fn roundtrip_preserves_all_field_values() {
-    // Comprehensive field-level round-trip for complex blocks.
-    let decoded = roundtrip(
-      LcpEncoder::new()
-        .add_file_tree(
-          "/project/src",
-          vec![
-            FileEntry {
-              name: "main.rs".to_string(),
-              kind: FileEntryKind::File,
-              size: 512,
-              children: vec![],
-            },
-            FileEntry {
-              name: "lib".to_string(),
-              kind: FileEntryKind::Directory,
-              size: 0,
-              children: vec![FileEntry {
-                name: "utils.rs".to_string(),
-                kind: FileEntryKind::File,
-                size: 128,
-                children: vec![],
-              }],
-            },
-          ],
-        )
-        .add_diff(
-          "Cargo.toml",
-          vec![
-            DiffHunk {
-              old_start: 5,
-              new_start: 5,
-              lines: b"+tokio = \"1\"\n".to_vec(),
-            },
-            DiffHunk {
-              old_start: 20,
-              new_start: 21,
-              lines: b"-old_dep = \"0.1\"\n+new_dep = \"0.2\"\n".to_vec(),
-            },
-          ],
-        ),
-    );
-
-    assert_eq!(decoded.blocks.len(), 2);
-
-    // Verify FileTree fields
-    match &decoded.blocks[0].content {
-      BlockContent::FileTree(tree) => {
-        assert_eq!(tree.root_path, "/project/src");
-        assert_eq!(tree.entries.len(), 2);
-        assert_eq!(tree.entries[0].name, "main.rs");
-        assert_eq!(tree.entries[0].size, 512);
-        assert_eq!(tree.entries[1].name, "lib");
-        assert_eq!(tree.entries[1].children.len(), 1);
-        assert_eq!(tree.entries[1].children[0].name, "utils.rs");
-      }
-      other => panic!("expected FileTree, got {other:?}"),
-    }
-
-    // Verify Diff fields
-    match &decoded.blocks[1].content {
-      BlockContent::Diff(diff) => {
-        assert_eq!(diff.path, "Cargo.toml");
-        assert_eq!(diff.hunks.len(), 2);
-        assert_eq!(diff.hunks[0].old_start, 5);
-        assert_eq!(diff.hunks[1].old_start, 20);
-        assert_eq!(diff.hunks[1].new_start, 21);
-      }
-      other => panic!("expected Diff, got {other:?}"),
-    }
-  }
-
-  // ── Validation tests ──────────────────────────────────────────────────
-
-  #[test]
-  fn rejects_bad_magic() {
-    let mut payload = LcpEncoder::new()
-      .add_conversation(Role::User, b"hi")
-      .encode()
-      .unwrap();
-
-    // Corrupt the magic bytes
-    payload[0] = b'X';
-    let result = LcpDecoder::decode(&payload);
-    assert!(matches!(result, Err(DecodeError::InvalidHeader(_))));
-  }
-
-  #[test]
-  fn rejects_truncated_header() {
-    let result = LcpDecoder::decode(&[0x4C, 0x43, 0x50, 0x00]);
-    assert!(matches!(result, Err(DecodeError::InvalidHeader(_))));
-  }
-
-  #[test]
-  fn rejects_missing_end_sentinel() {
-    let payload = LcpEncoder::new()
-      .add_conversation(Role::User, b"hi")
-      .encode()
-      .unwrap();
-
-    // Strip the last 4 bytes (the END sentinel)
-    let truncated = &payload[..payload.len() - 4];
-    let result = LcpDecoder::decode(truncated);
-    assert!(matches!(result, Err(DecodeError::MissingEndSentinel)));
-  }
-
-  #[test]
-  fn detects_trailing_data() {
-    let mut payload = LcpEncoder::new()
-      .add_conversation(Role::User, b"hi")
-      .encode()
-      .unwrap();
-
-    // Append garbage after the END sentinel
-    payload.extend_from_slice(b"trailing garbage");
-    let result = LcpDecoder::decode(&payload);
-    assert!(matches!(
-      result,
-      Err(DecodeError::TrailingData { extra_bytes: 16 })
-    ));
-  }
-
-  #[test]
-  fn unknown_block_type_captured_not_rejected() {
-    // Manually construct a payload with an unknown block type (0x42).
-    // We'll build: header + unknown frame + END sentinel.
-    use bcp_wire::header::HeaderFlags;
-
-    let mut payload = vec![0u8; HEADER_SIZE];
-    let header = LcpHeader::new(HeaderFlags::NONE);
-    header.write_to(&mut payload).unwrap();
-
-    // Unknown block frame: type=0x42, flags=0x00, content_len=5, body=b"hello"
-    let frame = BlockFrame {
-      block_type: 0x42,
-      flags: BlockFlags::NONE,
-      body: b"hello".to_vec(),
+    use super::*;
+    use bcp_encoder::LcpEncoder;
+    use bcp_types::diff::DiffHunk;
+    use bcp_types::enums::{
+        AnnotationKind, DataFormat, FormatHint, Lang, MediaType, Priority, Role, Status,
     };
-    frame.write_to(&mut payload).unwrap();
+    use bcp_types::file_tree::{FileEntry, FileEntryKind};
+    use bcp_wire::block_frame::BlockFlags;
 
-    // END sentinel
-    let end = BlockFrame {
-      block_type: 0xFF,
-      flags: BlockFlags::NONE,
-      body: Vec::new(),
-    };
-    end.write_to(&mut payload).unwrap();
+    // ── Round-trip helpers ────────────────────────────────────────────────
 
-    let decoded = LcpDecoder::decode(&payload).unwrap();
-    assert_eq!(decoded.blocks.len(), 1);
-    assert_eq!(decoded.blocks[0].block_type, BlockType::Unknown(0x42));
-
-    match &decoded.blocks[0].content {
-      BlockContent::Unknown { type_id, body } => {
-        assert_eq!(*type_id, 0x42);
-        assert_eq!(body, b"hello");
-      }
-      other => panic!("expected Unknown, got {other:?}"),
-    }
-  }
-
-  #[test]
-  fn optional_fields_absent_result_in_none() {
-    let decoded = roundtrip(
-      LcpEncoder::new()
-        .add_code(Lang::Rust, "x.rs", b"let x = 1;")
-        .add_conversation(Role::User, b"msg"),
-    );
-
-    // Code: line_range should be None
-    match &decoded.blocks[0].content {
-      BlockContent::Code(code) => assert!(code.line_range.is_none()),
-      other => panic!("expected Code, got {other:?}"),
+    /// Encode with `LcpEncoder`, decode with `LcpDecoder`, return blocks.
+    fn roundtrip(encoder: &LcpEncoder) -> DecodedPayload {
+        let payload = encoder.encode().unwrap();
+        LcpDecoder::decode(&payload).unwrap()
     }
 
-    // Conversation: tool_call_id should be None
-    match &decoded.blocks[1].content {
-      BlockContent::Conversation(conv) => assert!(conv.tool_call_id.is_none()),
-      other => panic!("expected Conversation, got {other:?}"),
+    // ── Acceptance criteria tests ─────────────────────────────────────────
+
+    #[test]
+    fn decode_parses_encoder_output() {
+        let payload = LcpEncoder::new()
+            .add_code(Lang::Rust, "main.rs", b"fn main() {}")
+            .encode()
+            .unwrap();
+
+        let decoded = LcpDecoder::decode(&payload).unwrap();
+        assert_eq!(decoded.blocks.len(), 1);
+        assert_eq!(decoded.header.version_major, 1);
+        assert_eq!(decoded.header.version_minor, 0);
     }
-  }
 
-  #[test]
-  fn summary_extraction_with_body() {
-    let decoded = roundtrip(
-      LcpEncoder::new()
-        .add_document("Guide", b"# Getting Started\n\nWelcome!", FormatHint::Markdown)
-        .with_summary("Onboarding guide for new contributors."),
-    );
+    #[test]
+    fn roundtrip_single_code_block() {
+        let decoded =
+            roundtrip(LcpEncoder::new().add_code(Lang::Rust, "lib.rs", b"pub fn hello() {}"));
 
-    let block = &decoded.blocks[0];
-    assert!(block.flags.has_summary());
-    assert_eq!(
-      block.summary.as_ref().unwrap().text,
-      "Onboarding guide for new contributors."
-    );
+        assert_eq!(decoded.blocks.len(), 1);
+        let block = &decoded.blocks[0];
+        assert_eq!(block.block_type, BlockType::Code);
+        assert!(block.summary.is_none());
 
-    match &block.content {
-      BlockContent::Document(doc) => {
-        assert_eq!(doc.title, "Guide");
-        assert_eq!(doc.content, b"# Getting Started\n\nWelcome!");
-        assert_eq!(doc.format_hint, FormatHint::Markdown);
-      }
-      other => panic!("expected Document, got {other:?}"),
+        match &block.content {
+            BlockContent::Code(code) => {
+                assert_eq!(code.lang, Lang::Rust);
+                assert_eq!(code.path, "lib.rs");
+                assert_eq!(code.content, b"pub fn hello() {}");
+                assert!(code.line_range.is_none());
+            }
+            other => panic!("expected Code, got {other:?}"),
+        }
     }
-  }
 
-  #[test]
-  fn rfc_example_roundtrip() {
-    let decoded = roundtrip(
-      LcpEncoder::new()
-        .add_code(Lang::Rust, "src/main.rs", b"fn main() { todo!() }")
-        .with_summary("Entry point: CLI setup and server startup.")
-        .with_priority(Priority::High)
-        .add_conversation(Role::User, b"Fix the timeout bug.")
-        .add_conversation(Role::Assistant, b"I'll examine the pool config...")
-        .add_tool_result("ripgrep", Status::Ok, b"3 matches found."),
-    );
+    #[test]
+    fn roundtrip_multiple_block_types() {
+        let decoded = roundtrip(
+            LcpEncoder::new()
+                .add_code(Lang::Python, "app.py", b"print('hi')")
+                .add_conversation(Role::User, b"What is this?")
+                .add_conversation(Role::Assistant, b"A greeting script.")
+                .add_tool_result("pytest", Status::Ok, b"1 passed")
+                .add_document("README", b"# Hello", FormatHint::Markdown),
+        );
 
-    assert_eq!(decoded.blocks.len(), 5);
+        assert_eq!(decoded.blocks.len(), 5);
 
-    // Block 0: CODE with summary
-    assert_eq!(decoded.blocks[0].block_type, BlockType::Code);
-    assert_eq!(
-      decoded.blocks[0].summary.as_ref().unwrap().text,
-      "Entry point: CLI setup and server startup."
-    );
-
-    // Block 1: ANNOTATION (priority)
-    assert_eq!(decoded.blocks[1].block_type, BlockType::Annotation);
-
-    // Block 2-3: CONVERSATION
-    assert_eq!(decoded.blocks[2].block_type, BlockType::Conversation);
-    assert_eq!(decoded.blocks[3].block_type, BlockType::Conversation);
-
-    // Block 4: TOOL_RESULT
-    assert_eq!(decoded.blocks[4].block_type, BlockType::ToolResult);
-  }
-
-  #[test]
-  fn empty_body_blocks() {
-    // Extension with empty content
-    let decoded = roundtrip(
-      LcpEncoder::new().add_extension("ns", "type", b""),
-    );
-
-    match &decoded.blocks[0].content {
-      BlockContent::Extension(ext) => {
-        assert_eq!(ext.namespace, "ns");
-        assert_eq!(ext.type_name, "type");
-        assert!(ext.content.is_empty());
-      }
-      other => panic!("expected Extension, got {other:?}"),
+        // Verify type ordering matches encoder order
+        let types: Vec<_> = decoded
+            .blocks
+            .iter()
+            .map(|b| b.block_type.clone())
+            .collect();
+        assert_eq!(
+            types,
+            vec![
+                BlockType::Code,
+                BlockType::Conversation,
+                BlockType::Conversation,
+                BlockType::ToolResult,
+                BlockType::Document,
+            ]
+        );
     }
-  }
+
+    #[test]
+    fn roundtrip_with_summary() {
+        let decoded = roundtrip(
+            LcpEncoder::new()
+                .add_code(Lang::Rust, "main.rs", b"fn main() {}")
+                .with_summary("Application entry point."),
+        );
+
+        assert_eq!(decoded.blocks.len(), 1);
+        let block = &decoded.blocks[0];
+        assert!(block.flags.has_summary());
+        assert_eq!(
+            block.summary.as_ref().unwrap().text,
+            "Application entry point."
+        );
+
+        // The content should still decode correctly
+        match &block.content {
+            BlockContent::Code(code) => {
+                assert_eq!(code.path, "main.rs");
+            }
+            other => panic!("expected Code, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn roundtrip_with_priority_annotation() {
+        let decoded = roundtrip(
+            LcpEncoder::new()
+                .add_code(Lang::Rust, "lib.rs", b"// code")
+                .with_priority(Priority::High),
+        );
+
+        // Encoder produces CODE + ANNOTATION blocks
+        assert_eq!(decoded.blocks.len(), 2);
+        assert_eq!(decoded.blocks[0].block_type, BlockType::Code);
+        assert_eq!(decoded.blocks[1].block_type, BlockType::Annotation);
+
+        match &decoded.blocks[1].content {
+            BlockContent::Annotation(ann) => {
+                assert_eq!(ann.target_block_id, 0);
+                assert_eq!(ann.kind, AnnotationKind::Priority);
+                assert_eq!(ann.value, vec![Priority::High.to_wire_byte()]);
+            }
+            other => panic!("expected Annotation, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn roundtrip_all_block_types() {
+        let decoded = roundtrip(
+            LcpEncoder::new()
+                .add_code(Lang::Rust, "main.rs", b"fn main() {}")
+                .add_conversation(Role::User, b"hello")
+                .add_file_tree(
+                    "/project",
+                    vec![FileEntry {
+                        name: "lib.rs".to_string(),
+                        kind: FileEntryKind::File,
+                        size: 100,
+                        children: vec![],
+                    }],
+                )
+                .add_tool_result("rg", Status::Ok, b"3 matches")
+                .add_document("README", b"# Title", FormatHint::Markdown)
+                .add_structured_data(DataFormat::Json, b"{\"key\": \"val\"}")
+                .add_diff(
+                    "src/lib.rs",
+                    vec![DiffHunk {
+                        old_start: 1,
+                        new_start: 1,
+                        lines: b"+new line\n".to_vec(),
+                    }],
+                )
+                .add_annotation(0, AnnotationKind::Tag, b"important")
+                .add_image(MediaType::Png, "screenshot", b"\x89PNG")
+                .add_extension("myco", "custom", b"data"),
+        );
+
+        assert_eq!(decoded.blocks.len(), 10);
+        let types: Vec<_> = decoded
+            .blocks
+            .iter()
+            .map(|b| b.block_type.clone())
+            .collect();
+        assert_eq!(
+            types,
+            vec![
+                BlockType::Code,
+                BlockType::Conversation,
+                BlockType::FileTree,
+                BlockType::ToolResult,
+                BlockType::Document,
+                BlockType::StructuredData,
+                BlockType::Diff,
+                BlockType::Annotation,
+                BlockType::Image,
+                BlockType::Extension,
+            ]
+        );
+    }
+
+    #[test]
+    fn roundtrip_code_with_line_range() {
+        let decoded = roundtrip(LcpEncoder::new().add_code_range(
+            Lang::Rust,
+            "lib.rs",
+            b"fn foo() {}",
+            10,
+            20,
+        ));
+
+        match &decoded.blocks[0].content {
+            BlockContent::Code(code) => {
+                assert_eq!(code.line_range, Some((10, 20)));
+            }
+            other => panic!("expected Code, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn roundtrip_conversation_with_tool_call_id() {
+        let decoded =
+            roundtrip(LcpEncoder::new().add_conversation_tool(Role::Tool, b"result", "call_abc"));
+
+        match &decoded.blocks[0].content {
+            BlockContent::Conversation(conv) => {
+                assert_eq!(conv.tool_call_id.as_deref(), Some("call_abc"));
+            }
+            other => panic!("expected Conversation, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn roundtrip_preserves_all_field_values() {
+        // Comprehensive field-level round-trip for complex blocks.
+        let decoded = roundtrip(
+            LcpEncoder::new()
+                .add_file_tree(
+                    "/project/src",
+                    vec![
+                        FileEntry {
+                            name: "main.rs".to_string(),
+                            kind: FileEntryKind::File,
+                            size: 512,
+                            children: vec![],
+                        },
+                        FileEntry {
+                            name: "lib".to_string(),
+                            kind: FileEntryKind::Directory,
+                            size: 0,
+                            children: vec![FileEntry {
+                                name: "utils.rs".to_string(),
+                                kind: FileEntryKind::File,
+                                size: 128,
+                                children: vec![],
+                            }],
+                        },
+                    ],
+                )
+                .add_diff(
+                    "Cargo.toml",
+                    vec![
+                        DiffHunk {
+                            old_start: 5,
+                            new_start: 5,
+                            lines: b"+tokio = \"1\"\n".to_vec(),
+                        },
+                        DiffHunk {
+                            old_start: 20,
+                            new_start: 21,
+                            lines: b"-old_dep = \"0.1\"\n+new_dep = \"0.2\"\n".to_vec(),
+                        },
+                    ],
+                ),
+        );
+
+        assert_eq!(decoded.blocks.len(), 2);
+
+        // Verify FileTree fields
+        match &decoded.blocks[0].content {
+            BlockContent::FileTree(tree) => {
+                assert_eq!(tree.root_path, "/project/src");
+                assert_eq!(tree.entries.len(), 2);
+                assert_eq!(tree.entries[0].name, "main.rs");
+                assert_eq!(tree.entries[0].size, 512);
+                assert_eq!(tree.entries[1].name, "lib");
+                assert_eq!(tree.entries[1].children.len(), 1);
+                assert_eq!(tree.entries[1].children[0].name, "utils.rs");
+            }
+            other => panic!("expected FileTree, got {other:?}"),
+        }
+
+        // Verify Diff fields
+        match &decoded.blocks[1].content {
+            BlockContent::Diff(diff) => {
+                assert_eq!(diff.path, "Cargo.toml");
+                assert_eq!(diff.hunks.len(), 2);
+                assert_eq!(diff.hunks[0].old_start, 5);
+                assert_eq!(diff.hunks[1].old_start, 20);
+                assert_eq!(diff.hunks[1].new_start, 21);
+            }
+            other => panic!("expected Diff, got {other:?}"),
+        }
+    }
+
+    // ── Validation tests ──────────────────────────────────────────────────
+
+    #[test]
+    fn rejects_bad_magic() {
+        let mut payload = LcpEncoder::new()
+            .add_conversation(Role::User, b"hi")
+            .encode()
+            .unwrap();
+
+        // Corrupt the magic bytes
+        payload[0] = b'X';
+        let result = LcpDecoder::decode(&payload);
+        assert!(matches!(result, Err(DecodeError::InvalidHeader(_))));
+    }
+
+    #[test]
+    fn rejects_truncated_header() {
+        let result = LcpDecoder::decode(&[0x4C, 0x43, 0x50, 0x00]);
+        assert!(matches!(result, Err(DecodeError::InvalidHeader(_))));
+    }
+
+    #[test]
+    fn rejects_missing_end_sentinel() {
+        let payload = LcpEncoder::new()
+            .add_conversation(Role::User, b"hi")
+            .encode()
+            .unwrap();
+
+        // Strip the last 4 bytes (the END sentinel)
+        let truncated = &payload[..payload.len() - 4];
+        let result = LcpDecoder::decode(truncated);
+        assert!(matches!(result, Err(DecodeError::MissingEndSentinel)));
+    }
+
+    #[test]
+    fn detects_trailing_data() {
+        let mut payload = LcpEncoder::new()
+            .add_conversation(Role::User, b"hi")
+            .encode()
+            .unwrap();
+
+        // Append garbage after the END sentinel
+        payload.extend_from_slice(b"trailing garbage");
+        let result = LcpDecoder::decode(&payload);
+        assert!(matches!(
+            result,
+            Err(DecodeError::TrailingData { extra_bytes: 16 })
+        ));
+    }
+
+    #[test]
+    fn unknown_block_type_captured_not_rejected() {
+        // Manually construct a payload with an unknown block type (0x42).
+        // We'll build: header + unknown frame + END sentinel.
+        use bcp_wire::header::HeaderFlags;
+
+        let mut payload = vec![0u8; HEADER_SIZE];
+        let header = LcpHeader::new(HeaderFlags::NONE);
+        header.write_to(&mut payload).unwrap();
+
+        // Unknown block frame: type=0x42, flags=0x00, content_len=5, body=b"hello"
+        let frame = BlockFrame {
+            block_type: 0x42,
+            flags: BlockFlags::NONE,
+            body: b"hello".to_vec(),
+        };
+        frame.write_to(&mut payload).unwrap();
+
+        // END sentinel
+        let end = BlockFrame {
+            block_type: 0xFF,
+            flags: BlockFlags::NONE,
+            body: Vec::new(),
+        };
+        end.write_to(&mut payload).unwrap();
+
+        let decoded = LcpDecoder::decode(&payload).unwrap();
+        assert_eq!(decoded.blocks.len(), 1);
+        assert_eq!(decoded.blocks[0].block_type, BlockType::Unknown(0x42));
+
+        match &decoded.blocks[0].content {
+            BlockContent::Unknown { type_id, body } => {
+                assert_eq!(*type_id, 0x42);
+                assert_eq!(body, b"hello");
+            }
+            other => panic!("expected Unknown, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn optional_fields_absent_result_in_none() {
+        let decoded = roundtrip(
+            LcpEncoder::new()
+                .add_code(Lang::Rust, "x.rs", b"let x = 1;")
+                .add_conversation(Role::User, b"msg"),
+        );
+
+        // Code: line_range should be None
+        match &decoded.blocks[0].content {
+            BlockContent::Code(code) => assert!(code.line_range.is_none()),
+            other => panic!("expected Code, got {other:?}"),
+        }
+
+        // Conversation: tool_call_id should be None
+        match &decoded.blocks[1].content {
+            BlockContent::Conversation(conv) => assert!(conv.tool_call_id.is_none()),
+            other => panic!("expected Conversation, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn summary_extraction_with_body() {
+        let decoded = roundtrip(
+            LcpEncoder::new()
+                .add_document(
+                    "Guide",
+                    b"# Getting Started\n\nWelcome!",
+                    FormatHint::Markdown,
+                )
+                .with_summary("Onboarding guide for new contributors."),
+        );
+
+        let block = &decoded.blocks[0];
+        assert!(block.flags.has_summary());
+        assert_eq!(
+            block.summary.as_ref().unwrap().text,
+            "Onboarding guide for new contributors."
+        );
+
+        match &block.content {
+            BlockContent::Document(doc) => {
+                assert_eq!(doc.title, "Guide");
+                assert_eq!(doc.content, b"# Getting Started\n\nWelcome!");
+                assert_eq!(doc.format_hint, FormatHint::Markdown);
+            }
+            other => panic!("expected Document, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn rfc_example_roundtrip() {
+        let decoded = roundtrip(
+            LcpEncoder::new()
+                .add_code(Lang::Rust, "src/main.rs", b"fn main() { todo!() }")
+                .with_summary("Entry point: CLI setup and server startup.")
+                .with_priority(Priority::High)
+                .add_conversation(Role::User, b"Fix the timeout bug.")
+                .add_conversation(Role::Assistant, b"I'll examine the pool config...")
+                .add_tool_result("ripgrep", Status::Ok, b"3 matches found."),
+        );
+
+        assert_eq!(decoded.blocks.len(), 5);
+
+        // Block 0: CODE with summary
+        assert_eq!(decoded.blocks[0].block_type, BlockType::Code);
+        assert_eq!(
+            decoded.blocks[0].summary.as_ref().unwrap().text,
+            "Entry point: CLI setup and server startup."
+        );
+
+        // Block 1: ANNOTATION (priority)
+        assert_eq!(decoded.blocks[1].block_type, BlockType::Annotation);
+
+        // Block 2-3: CONVERSATION
+        assert_eq!(decoded.blocks[2].block_type, BlockType::Conversation);
+        assert_eq!(decoded.blocks[3].block_type, BlockType::Conversation);
+
+        // Block 4: TOOL_RESULT
+        assert_eq!(decoded.blocks[4].block_type, BlockType::ToolResult);
+    }
+
+    #[test]
+    fn empty_body_blocks() {
+        // Extension with empty content
+        let decoded = roundtrip(LcpEncoder::new().add_extension("ns", "type", b""));
+
+        match &decoded.blocks[0].content {
+            BlockContent::Extension(ext) => {
+                assert_eq!(ext.namespace, "ns");
+                assert_eq!(ext.type_name, "type");
+                assert!(ext.content.is_empty());
+            }
+            other => panic!("expected Extension, got {other:?}"),
+        }
+    }
 }

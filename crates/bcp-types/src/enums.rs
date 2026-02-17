@@ -84,83 +84,83 @@ macro_rules! wire_enum {
 /// `wire_enum!` macro and is implemented manually.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Lang {
-  Rust,
-  TypeScript,
-  JavaScript,
-  Python,
-  Go,
-  Java,
-  C,
-  Cpp,
-  Ruby,
-  Shell,
-  Sql,
-  Html,
-  Css,
-  Json,
-  Yaml,
-  Toml,
-  Markdown,
-  Unknown,
-  /// Forward-compatible catch-all. Preserves the raw wire byte for
-  /// language IDs this version doesn't recognize.
-  Other(u8),
+    Rust,
+    TypeScript,
+    JavaScript,
+    Python,
+    Go,
+    Java,
+    C,
+    Cpp,
+    Ruby,
+    Shell,
+    Sql,
+    Html,
+    Css,
+    Json,
+    Yaml,
+    Toml,
+    Markdown,
+    Unknown,
+    /// Forward-compatible catch-all. Preserves the raw wire byte for
+    /// language IDs this version doesn't recognize.
+    Other(u8),
 }
 
 impl Lang {
-  /// Encode this variant as a single wire byte.
-  pub fn to_wire_byte(self) -> u8 {
-    match self {
-      Self::Rust => 0x01,
-      Self::TypeScript => 0x02,
-      Self::JavaScript => 0x03,
-      Self::Python => 0x04,
-      Self::Go => 0x05,
-      Self::Java => 0x06,
-      Self::C => 0x07,
-      Self::Cpp => 0x08,
-      Self::Ruby => 0x09,
-      Self::Shell => 0x0A,
-      Self::Sql => 0x0B,
-      Self::Html => 0x0C,
-      Self::Css => 0x0D,
-      Self::Json => 0x0E,
-      Self::Yaml => 0x0F,
-      Self::Toml => 0x10,
-      Self::Markdown => 0x11,
-      Self::Unknown => 0xFF,
-      Self::Other(id) => id,
+    /// Encode this variant as a single wire byte.
+    pub fn to_wire_byte(self) -> u8 {
+        match self {
+            Self::Rust => 0x01,
+            Self::TypeScript => 0x02,
+            Self::JavaScript => 0x03,
+            Self::Python => 0x04,
+            Self::Go => 0x05,
+            Self::Java => 0x06,
+            Self::C => 0x07,
+            Self::Cpp => 0x08,
+            Self::Ruby => 0x09,
+            Self::Shell => 0x0A,
+            Self::Sql => 0x0B,
+            Self::Html => 0x0C,
+            Self::Css => 0x0D,
+            Self::Json => 0x0E,
+            Self::Yaml => 0x0F,
+            Self::Toml => 0x10,
+            Self::Markdown => 0x11,
+            Self::Unknown => 0xFF,
+            Self::Other(id) => id,
+        }
     }
-  }
 
-  /// Decode a wire byte into a [`Lang`].
-  ///
-  /// Known values map to named variants. Unrecognized values become
-  /// `Other(id)` rather than an error, since new languages may be
-  /// added without a spec revision.
-  pub fn from_wire_byte(value: u8) -> Self {
-    match value {
-      0x01 => Self::Rust,
-      0x02 => Self::TypeScript,
-      0x03 => Self::JavaScript,
-      0x04 => Self::Python,
-      0x05 => Self::Go,
-      0x06 => Self::Java,
-      0x07 => Self::C,
-      0x08 => Self::Cpp,
-      0x09 => Self::Ruby,
-      0x0A => Self::Shell,
-      0x0B => Self::Sql,
-      0x0C => Self::Html,
-      0x0D => Self::Css,
-      0x0E => Self::Json,
-      0x0F => Self::Yaml,
-      0x10 => Self::Toml,
-      0x11 => Self::Markdown,
-      0xFF => Self::Unknown,
-      other => Self::Other(other),
+    /// Decode a wire byte into a [`Lang`].
+    ///
+    /// Known values map to named variants. Unrecognized values become
+    /// `Other(id)` rather than an error, since new languages may be
+    /// added without a spec revision.
+    pub fn from_wire_byte(value: u8) -> Self {
+        match value {
+            0x01 => Self::Rust,
+            0x02 => Self::TypeScript,
+            0x03 => Self::JavaScript,
+            0x04 => Self::Python,
+            0x05 => Self::Go,
+            0x06 => Self::Java,
+            0x07 => Self::C,
+            0x08 => Self::Cpp,
+            0x09 => Self::Ruby,
+            0x0A => Self::Shell,
+            0x0B => Self::Sql,
+            0x0C => Self::Html,
+            0x0D => Self::Css,
+            0x0E => Self::Json,
+            0x0F => Self::Yaml,
+            0x10 => Self::Toml,
+            0x11 => Self::Markdown,
+            0xFF => Self::Unknown,
+            other => Self::Other(other),
+        }
     }
-  }
 }
 
 // ── Role ──────────────────────────────────────────────────────────────
@@ -353,173 +353,173 @@ wire_enum! {
 
 #[cfg(test)]
 mod tests {
-  use super::*;
+    use super::*;
 
-  // ── Lang tests ────────────────────────────────────────────────────
+    // ── Lang tests ────────────────────────────────────────────────────
 
-  #[test]
-  fn lang_all_known_roundtrip() {
-    let cases = [
-      (Lang::Rust, 0x01),
-      (Lang::TypeScript, 0x02),
-      (Lang::JavaScript, 0x03),
-      (Lang::Python, 0x04),
-      (Lang::Go, 0x05),
-      (Lang::Java, 0x06),
-      (Lang::C, 0x07),
-      (Lang::Cpp, 0x08),
-      (Lang::Ruby, 0x09),
-      (Lang::Shell, 0x0A),
-      (Lang::Sql, 0x0B),
-      (Lang::Html, 0x0C),
-      (Lang::Css, 0x0D),
-      (Lang::Json, 0x0E),
-      (Lang::Yaml, 0x0F),
-      (Lang::Toml, 0x10),
-      (Lang::Markdown, 0x11),
-      (Lang::Unknown, 0xFF),
-    ];
-    for (variant, wire) in cases {
-      assert_eq!(variant.to_wire_byte(), wire);
-      assert_eq!(Lang::from_wire_byte(wire), variant);
+    #[test]
+    fn lang_all_known_roundtrip() {
+        let cases = [
+            (Lang::Rust, 0x01),
+            (Lang::TypeScript, 0x02),
+            (Lang::JavaScript, 0x03),
+            (Lang::Python, 0x04),
+            (Lang::Go, 0x05),
+            (Lang::Java, 0x06),
+            (Lang::C, 0x07),
+            (Lang::Cpp, 0x08),
+            (Lang::Ruby, 0x09),
+            (Lang::Shell, 0x0A),
+            (Lang::Sql, 0x0B),
+            (Lang::Html, 0x0C),
+            (Lang::Css, 0x0D),
+            (Lang::Json, 0x0E),
+            (Lang::Yaml, 0x0F),
+            (Lang::Toml, 0x10),
+            (Lang::Markdown, 0x11),
+            (Lang::Unknown, 0xFF),
+        ];
+        for (variant, wire) in cases {
+            assert_eq!(variant.to_wire_byte(), wire);
+            assert_eq!(Lang::from_wire_byte(wire), variant);
+        }
     }
-  }
 
-  #[test]
-  fn lang_other_preserved() {
-    let lang = Lang::from_wire_byte(0x42);
-    assert_eq!(lang, Lang::Other(0x42));
-    assert_eq!(lang.to_wire_byte(), 0x42);
-  }
-
-  // ── Role tests ────────────────────────────────────────────────────
-
-  #[test]
-  fn role_roundtrip() {
-    let cases = [
-      (Role::System, 0x01),
-      (Role::User, 0x02),
-      (Role::Assistant, 0x03),
-      (Role::Tool, 0x04),
-    ];
-    for (variant, wire) in cases {
-      assert_eq!(variant.to_wire_byte(), wire);
-      assert_eq!(Role::from_wire_byte(wire).unwrap(), variant);
+    #[test]
+    fn lang_other_preserved() {
+        let lang = Lang::from_wire_byte(0x42);
+        assert_eq!(lang, Lang::Other(0x42));
+        assert_eq!(lang.to_wire_byte(), 0x42);
     }
-  }
 
-  #[test]
-  fn role_invalid_rejected() {
-    let result = Role::from_wire_byte(0x09);
-    assert!(matches!(
-      result,
-      Err(TypeError::InvalidEnumValue {
-        enum_name: "Role",
-        value: 0x09
-      })
-    ));
-  }
+    // ── Role tests ────────────────────────────────────────────────────
 
-  // ── Status tests ──────────────────────────────────────────────────
-
-  #[test]
-  fn status_roundtrip() {
-    let cases = [
-      (Status::Ok, 0x01),
-      (Status::Error, 0x02),
-      (Status::Timeout, 0x03),
-    ];
-    for (variant, wire) in cases {
-      assert_eq!(variant.to_wire_byte(), wire);
-      assert_eq!(Status::from_wire_byte(wire).unwrap(), variant);
+    #[test]
+    fn role_roundtrip() {
+        let cases = [
+            (Role::System, 0x01),
+            (Role::User, 0x02),
+            (Role::Assistant, 0x03),
+            (Role::Tool, 0x04),
+        ];
+        for (variant, wire) in cases {
+            assert_eq!(variant.to_wire_byte(), wire);
+            assert_eq!(Role::from_wire_byte(wire).unwrap(), variant);
+        }
     }
-  }
 
-  // ── Priority tests ────────────────────────────────────────────────
-
-  #[test]
-  fn priority_roundtrip() {
-    let cases = [
-      (Priority::Critical, 0x01),
-      (Priority::High, 0x02),
-      (Priority::Normal, 0x03),
-      (Priority::Low, 0x04),
-      (Priority::Background, 0x05),
-    ];
-    for (variant, wire) in cases {
-      assert_eq!(variant.to_wire_byte(), wire);
-      assert_eq!(Priority::from_wire_byte(wire).unwrap(), variant);
+    #[test]
+    fn role_invalid_rejected() {
+        let result = Role::from_wire_byte(0x09);
+        assert!(matches!(
+            result,
+            Err(TypeError::InvalidEnumValue {
+                enum_name: "Role",
+                value: 0x09
+            })
+        ));
     }
-  }
 
-  #[test]
-  fn priority_ordering() {
-    assert!(Priority::Critical < Priority::High);
-    assert!(Priority::High < Priority::Normal);
-    assert!(Priority::Normal < Priority::Low);
-    assert!(Priority::Low < Priority::Background);
-  }
+    // ── Status tests ──────────────────────────────────────────────────
 
-  // ── FormatHint tests ──────────────────────────────────────────────
-
-  #[test]
-  fn format_hint_roundtrip() {
-    let cases = [
-      (FormatHint::Markdown, 0x01),
-      (FormatHint::Plain, 0x02),
-      (FormatHint::Html, 0x03),
-    ];
-    for (variant, wire) in cases {
-      assert_eq!(variant.to_wire_byte(), wire);
-      assert_eq!(FormatHint::from_wire_byte(wire).unwrap(), variant);
+    #[test]
+    fn status_roundtrip() {
+        let cases = [
+            (Status::Ok, 0x01),
+            (Status::Error, 0x02),
+            (Status::Timeout, 0x03),
+        ];
+        for (variant, wire) in cases {
+            assert_eq!(variant.to_wire_byte(), wire);
+            assert_eq!(Status::from_wire_byte(wire).unwrap(), variant);
+        }
     }
-  }
 
-  // ── DataFormat tests ──────────────────────────────────────────────
+    // ── Priority tests ────────────────────────────────────────────────
 
-  #[test]
-  fn data_format_roundtrip() {
-    let cases = [
-      (DataFormat::Json, 0x01),
-      (DataFormat::Yaml, 0x02),
-      (DataFormat::Toml, 0x03),
-      (DataFormat::Csv, 0x04),
-    ];
-    for (variant, wire) in cases {
-      assert_eq!(variant.to_wire_byte(), wire);
-      assert_eq!(DataFormat::from_wire_byte(wire).unwrap(), variant);
+    #[test]
+    fn priority_roundtrip() {
+        let cases = [
+            (Priority::Critical, 0x01),
+            (Priority::High, 0x02),
+            (Priority::Normal, 0x03),
+            (Priority::Low, 0x04),
+            (Priority::Background, 0x05),
+        ];
+        for (variant, wire) in cases {
+            assert_eq!(variant.to_wire_byte(), wire);
+            assert_eq!(Priority::from_wire_byte(wire).unwrap(), variant);
+        }
     }
-  }
 
-  // ── AnnotationKind tests ──────────────────────────────────────────
-
-  #[test]
-  fn annotation_kind_roundtrip() {
-    let cases = [
-      (AnnotationKind::Priority, 0x01),
-      (AnnotationKind::Summary, 0x02),
-      (AnnotationKind::Tag, 0x03),
-    ];
-    for (variant, wire) in cases {
-      assert_eq!(variant.to_wire_byte(), wire);
-      assert_eq!(AnnotationKind::from_wire_byte(wire).unwrap(), variant);
+    #[test]
+    fn priority_ordering() {
+        assert!(Priority::Critical < Priority::High);
+        assert!(Priority::High < Priority::Normal);
+        assert!(Priority::Normal < Priority::Low);
+        assert!(Priority::Low < Priority::Background);
     }
-  }
 
-  // ── MediaType tests ───────────────────────────────────────────────
+    // ── FormatHint tests ──────────────────────────────────────────────
 
-  #[test]
-  fn media_type_roundtrip() {
-    let cases = [
-      (MediaType::Png, 0x01),
-      (MediaType::Jpeg, 0x02),
-      (MediaType::Gif, 0x03),
-      (MediaType::Svg, 0x04),
-      (MediaType::Webp, 0x05),
-    ];
-    for (variant, wire) in cases {
-      assert_eq!(variant.to_wire_byte(), wire);
-      assert_eq!(MediaType::from_wire_byte(wire).unwrap(), variant);
+    #[test]
+    fn format_hint_roundtrip() {
+        let cases = [
+            (FormatHint::Markdown, 0x01),
+            (FormatHint::Plain, 0x02),
+            (FormatHint::Html, 0x03),
+        ];
+        for (variant, wire) in cases {
+            assert_eq!(variant.to_wire_byte(), wire);
+            assert_eq!(FormatHint::from_wire_byte(wire).unwrap(), variant);
+        }
     }
-  }
+
+    // ── DataFormat tests ──────────────────────────────────────────────
+
+    #[test]
+    fn data_format_roundtrip() {
+        let cases = [
+            (DataFormat::Json, 0x01),
+            (DataFormat::Yaml, 0x02),
+            (DataFormat::Toml, 0x03),
+            (DataFormat::Csv, 0x04),
+        ];
+        for (variant, wire) in cases {
+            assert_eq!(variant.to_wire_byte(), wire);
+            assert_eq!(DataFormat::from_wire_byte(wire).unwrap(), variant);
+        }
+    }
+
+    // ── AnnotationKind tests ──────────────────────────────────────────
+
+    #[test]
+    fn annotation_kind_roundtrip() {
+        let cases = [
+            (AnnotationKind::Priority, 0x01),
+            (AnnotationKind::Summary, 0x02),
+            (AnnotationKind::Tag, 0x03),
+        ];
+        for (variant, wire) in cases {
+            assert_eq!(variant.to_wire_byte(), wire);
+            assert_eq!(AnnotationKind::from_wire_byte(wire).unwrap(), variant);
+        }
+    }
+
+    // ── MediaType tests ───────────────────────────────────────────────
+
+    #[test]
+    fn media_type_roundtrip() {
+        let cases = [
+            (MediaType::Png, 0x01),
+            (MediaType::Jpeg, 0x02),
+            (MediaType::Gif, 0x03),
+            (MediaType::Svg, 0x04),
+            (MediaType::Webp, 0x05),
+        ];
+        for (variant, wire) in cases {
+            assert_eq!(variant.to_wire_byte(), wire);
+            assert_eq!(MediaType::from_wire_byte(wire).unwrap(), variant);
+        }
+    }
 }

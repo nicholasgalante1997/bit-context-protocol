@@ -1,14 +1,14 @@
 use crate::error::WireError;
 
-// Quick note on the magic bytes: 0x4C is L, 0x43 is C, 0x50 is P, 0x00 is null. 
-// You can verify this in any ASCII table. 
-// We store it as raw bytes rather than a u32 
+// Quick note on the magic bytes: 0x4C is L, 0x43 is C, 0x50 is P, 0x00 is null.
+// You can verify this in any ASCII table.
+// We store it as raw bytes rather than a u32
 // so we don't have to think about endianness — it's always these 4 bytes in this order.
 
 /// Magic number: ASCII "LCP\0".
 /// Written as raw bytes, not as a u32, so byte order doesn't matter.
 /// each u8 (unsigned 8bit integer) can be represented as a byte
-/// A single hex digit represents exactly 4 bits (a "nibble"). 
+/// A single hex digit represents exactly 4 bits (a "nibble").
 /// So a byte (8 bits) is always exactly 2 hex digits
 pub const LCP_MAGIC: [u8; 4] = [0x4C, 0x43, 0x50, 0x00];
 
@@ -21,7 +21,7 @@ pub const VERSION_MAJOR: u8 = 1;
 /// Current format version minor.
 pub const VERSION_MINOR: u8 = 0;
 
-// Now HeaderFlags. This is a newtype pattern — a single-field struct wrapping a primitive. 
+// Now HeaderFlags. This is a newtype pattern — a single-field struct wrapping a primitive.
 // You'll see this a lot in Rust where you want type safety around a raw value:
 
 /// Header flags bitfield.
@@ -62,16 +62,16 @@ impl HeaderFlags {
     }
 }
 
-// The key thing here: HeaderFlags(u8) is a tuple struct. 
-// The self.0 accesses the inner u8. 
-// The constants like COMPRESSED are const values of Self, 
+// The key thing here: HeaderFlags(u8) is a tuple struct.
+// The self.0 accesses the inner u8.
+// The constants like COMPRESSED are const values of Self,
 // so HeaderFlags::COMPRESSED is HeaderFlags(0b0000_0001).
-// The methods use the same & masking pattern from varint: 
-//      self.0 & Self::COMPRESSED.0 != 0 checks if bit 0 is set. 
+// The methods use the same & masking pattern from varint:
+//      self.0 & Self::COMPRESSED.0 != 0 checks if bit 0 is set.
 // This is the & 0x80 pattern you just learned, but checking bit 0 instead of bit 7.
-// Also notice #[derive(Clone, Copy)] — 
-// this tells Rust that HeaderFlags can be copied implicitly, like a primitive. 
-// Without Copy, passing a HeaderFlags to a function would move it (transferring ownership). 
+// Also notice #[derive(Clone, Copy)] —
+// this tells Rust that HeaderFlags can be copied implicitly, like a primitive.
+// Without Copy, passing a HeaderFlags to a function would move it (transferring ownership).
 // Since it's just a u8 wrapper, copying is trivially cheap and we want value semantics.
 
 /// LCP file header — the first 8 bytes of every payload.
@@ -173,19 +173,19 @@ impl LcpHeader {
 }
 
 // A few things worth noting:
-// ```rs buf[0..4].copy_from_slice(&LCP_MAGIC)``` 
-// — this copies the 4 magic bytes into the buffer. 
-// copy_from_slice is a slice method that copies from one slice into another. 
-// It panics if the lengths don't match, 
-// but we already checked buf.len() >= HEADER_SIZE 
+// ```rs buf[0..4].copy_from_slice(&LCP_MAGIC)```
+// — this copies the 4 magic bytes into the buffer.
+// copy_from_slice is a slice method that copies from one slice into another.
+// It panics if the lengths don't match,
+// but we already checked buf.len() >= HEADER_SIZE
 // so the subslice buf[0..4] is guaranteed to be 4 bytes.
-// ```rs u32::from_le_bytes([buf[0], buf[1], buf[2], buf[3]])``` 
-// — this constructs a u32 from 4 bytes in little-endian order. 
-// We only use this for the error message so the developer sees a readable hex value. 
-// We don't use it for the comparison itself — comparing byte slices directly (buf[0..4] != LCP_MAGIC) is cleaner 
+// ```rs u32::from_le_bytes([buf[0], buf[1], buf[2], buf[3]])```
+// — this constructs a u32 from 4 bytes in little-endian order.
+// We only use this for the error message so the developer sees a readable hex value.
+// We don't use it for the comparison itself — comparing byte slices directly (buf[0..4] != LCP_MAGIC) is cleaner
 // and sidesteps endianness entirely.
-// The validation order matters — we check magic first (is this even an LCP file?), 
-// then version (is it a version we understand?), then reserved fields. 
+// The validation order matters — we check magic first (is this even an LCP file?),
+// then version (is it a version we understand?), then reserved fields.
 // This gives the most useful error message for each failure case.
 
 #[cfg(test)]
@@ -203,9 +203,8 @@ mod tests {
 
     #[test]
     fn roundtrip_with_flags() {
-        let flags = HeaderFlags::from_raw(
-            HeaderFlags::COMPRESSED.raw() | HeaderFlags::HAS_INDEX.raw(),
-        );
+        let flags =
+            HeaderFlags::from_raw(HeaderFlags::COMPRESSED.raw() | HeaderFlags::HAS_INDEX.raw());
         let header = LcpHeader::new(flags);
         let mut buf = [0u8; HEADER_SIZE];
         header.write_to(&mut buf).unwrap();
@@ -252,7 +251,10 @@ mod tests {
         let result = LcpHeader::read_from(&buf);
         assert!(matches!(
             result,
-            Err(WireError::ReservedNonZero { offset: 7, value: 0xFF })
+            Err(WireError::ReservedNonZero {
+                offset: 7,
+                value: 0xFF
+            })
         ));
     }
 

@@ -1,8 +1,8 @@
 #![warn(clippy::pedantic)]
 
-pub mod error;
 pub mod block_writer;
 pub mod encoder;
+pub mod error;
 
 mod compression;
 mod content_store;

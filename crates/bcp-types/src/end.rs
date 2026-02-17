@@ -23,40 +23,40 @@ use crate::error::TypeError;
 pub struct EndBlock;
 
 impl EndBlock {
-  /// Serialize the END block body — always empty.
-  pub fn encode_body(&self) -> Vec<u8> {
-    Vec::new()
-  }
+    /// Serialize the END block body — always empty.
+    pub fn encode_body(&self) -> Vec<u8> {
+        Vec::new()
+    }
 
-  /// Deserialize an END block from a body buffer.
-  ///
-  /// Succeeds on empty input. Non-empty input is accepted but ignored,
-  /// since a future spec revision could attach trailing metadata to
-  /// the END sentinel.
-  pub fn decode_body(_buf: &[u8]) -> Result<Self, TypeError> {
-    Ok(Self)
-  }
+    /// Deserialize an END block from a body buffer.
+    ///
+    /// Succeeds on empty input. Non-empty input is accepted but ignored,
+    /// since a future spec revision could attach trailing metadata to
+    /// the END sentinel.
+    pub fn decode_body(_buf: &[u8]) -> Result<Self, TypeError> {
+        Ok(Self)
+    }
 }
 
 #[cfg(test)]
 mod tests {
-  use super::*;
+    use super::*;
 
-  #[test]
-  fn encode_produces_empty_body() {
-    let block = EndBlock;
-    assert!(block.encode_body().is_empty());
-  }
+    #[test]
+    fn encode_produces_empty_body() {
+        let block = EndBlock;
+        assert!(block.encode_body().is_empty());
+    }
 
-  #[test]
-  fn decode_empty_body() {
-    let block = EndBlock::decode_body(&[]).unwrap();
-    assert_eq!(block, EndBlock);
-  }
+    #[test]
+    fn decode_empty_body() {
+        let block = EndBlock::decode_body(&[]).unwrap();
+        assert_eq!(block, EndBlock);
+    }
 
-  #[test]
-  fn decode_ignores_trailing_bytes() {
-    let block = EndBlock::decode_body(&[0xFF, 0x00]).unwrap();
-    assert_eq!(block, EndBlock);
-  }
+    #[test]
+    fn decode_ignores_trailing_bytes() {
+        let block = EndBlock::decode_body(&[0xFF, 0x00]).unwrap();
+        assert_eq!(block, EndBlock);
+    }
 }

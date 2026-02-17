@@ -148,8 +148,18 @@ mod tests {
 
     #[test]
     fn roundtrip_boundary_values() {
-        let values = [0, 1, 127, 128, 255, 256, 16383, 16384,
-                      u64::from(u32::MAX), u64::MAX];
+        let values = [
+            0,
+            1,
+            127,
+            128,
+            255,
+            256,
+            16383,
+            16384,
+            u64::from(u32::MAX),
+            u64::MAX,
+        ];
         for &value in &values {
             let encoded = encode(value);
             let (decoded, consumed) = decode_varint(&encoded).unwrap();
@@ -170,7 +180,10 @@ mod tests {
     #[test]
     fn decode_empty_input() {
         let result = decode_varint(&[]);
-        assert!(matches!(result, Err(WireError::UnexpectedEof { offset: 0 })));
+        assert!(matches!(
+            result,
+            Err(WireError::UnexpectedEof { offset: 0 })
+        ));
     }
 
     #[test]
