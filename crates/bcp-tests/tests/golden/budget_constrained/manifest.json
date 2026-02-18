@@ -1,0 +1,14 @@
+{
+  "description": "Three CODE blocks with CRITICAL, NORMAL, and BACKGROUND priorities for budget testing.",
+  "blocks": [
+    { "type": "code", "lang": "rust", "path": "critical.rs",
+      "content": "// CRITICAL: must always be included\nfn critical_path() { todo!() }",
+      "priority": "critical" },
+    { "type": "code", "lang": "rust", "path": "normal.rs",
+      "content": "// NORMAL priority: included when budget allows\nfn normal_path() {}",
+      "priority": "normal" },
+    { "type": "code", "lang": "rust", "path": "background.rs",
+      "content": "// BACKGROUND: omitted first under budget pressure\nfn background() {}",
+      "priority": "background" }
+  ]
+}

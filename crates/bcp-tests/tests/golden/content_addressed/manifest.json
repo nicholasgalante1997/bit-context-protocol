@@ -1,0 +1,8 @@
+{
+  "description": "Two identical CODE blocks deduplicated via BLAKE3 content addressing.",
+  "blocks": [
+    { "type": "code", "lang": "rust", "path": "src/a.rs", "content": "fn shared() -> u32 { 42 }" },
+    { "type": "code", "lang": "rust", "path": "src/b.rs", "content": "fn shared() -> u32 { 42 }" }
+  ],
+  "auto_dedup": true
+}

@@ -1,0 +1,38 @@
+---
+source: crates/bcp-tests/tests/conformance.rs
+expression: output
+---
+<context>
+<code lang="go" path="main.go">
+package main
+</code>
+
+<turn role="system">You are a helpful assistant.</turn>
+
+<tree root="/">
+main.go (12 bytes)
+</tree>
+
+<tool name="ls" status="ok">
+main.go
+</tool>
+
+<doc title="README" format="markdown">
+# BCP
+</doc>
+
+<data format="json">
+{"version":1}
+</data>
+
+<diff path="main.go">
+-package old
++package main
+</diff>
+
+<embed-ref model="text-embedding-3-small" />
+
+<ext ns="com.example" type="custom">
+hello
+</ext>
+</context>

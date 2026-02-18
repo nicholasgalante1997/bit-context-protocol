@@ -1,0 +1,11 @@
+---
+source: crates/bcp-tests/tests/conformance.rs
+expression: output
+---
+<context>
+<code lang="typescript" path="index.ts">
+export const VERSION = '1.0.0';
+</code>
+
+<turn role="user">What does this export?</turn>
+</context>

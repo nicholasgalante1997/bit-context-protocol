@@ -1,0 +1,15 @@
+{
+  "description": "CODE and TOOL_RESULT blocks, each carrying a summary sub-block.",
+  "blocks": [
+    {
+      "type": "code", "lang": "python", "path": "server.py",
+      "content": "import asyncio\n\nasync def serve():\n    pass",
+      "summary": "Async HTTP server entry point."
+    },
+    {
+      "type": "tool_result", "tool_name": "ripgrep", "status": "ok",
+      "content": "src/main.rs:42: ConnectionPool::new()",
+      "summary": "1 match for ConnectionPool across 1 file."
+    }
+  ]
+}

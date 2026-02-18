@@ -1,0 +1,16 @@
+---
+source: crates/bcp-tests/tests/conformance.rs
+expression: output
+---
+## server.py
+
+```python
+import asyncio
+
+async def serve():
+    pass
+```
+
+### Tool: ripgrep (ok)
+
+src/main.rs:42: ConnectionPool::new()

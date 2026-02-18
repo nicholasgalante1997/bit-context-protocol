@@ -1,0 +1,8 @@
+{
+  "description": "CODE + CONVERSATION with whole-payload zstd compression (header COMPRESSED flag set).",
+  "blocks": [
+    { "type": "code", "lang": "typescript", "path": "index.ts", "content": "export const VERSION = '1.0.0';" },
+    { "type": "conversation", "role": "user", "content": "What does this export?" }
+  ],
+  "compress_payload": true
+}

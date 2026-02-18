@@ -1,0 +1,11 @@
+---
+source: crates/bcp-tests/tests/conformance.rs
+expression: output
+---
+## src/main.rs
+
+```rust
+fn main() {
+    println!("Hello, LCP!");
+}
+```

@@ -1,8 +1,8 @@
 use crate::enums::Lang;
 use crate::error::TypeError;
 use crate::fields::{
-    FieldWireType, decode_bytes_value, decode_field_header, decode_varint_value,
-    encode_bytes_field, encode_varint_field, skip_field,
+    decode_bytes_value, decode_field_header, decode_varint_value, encode_bytes_field,
+    encode_varint_field, skip_field,
 };
 
 /// CODE block — represents a source code file or fragment.

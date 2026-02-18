@@ -57,6 +57,7 @@ bcp-encoder    bcp-decoder    (both depend on bcp-wire + bcp-types)
 | **3. Advanced** | SPEC_06, 07 | `bcp-encoder`, `bcp-decoder` | Zstd compression, BLAKE3 content addressing | Complete |
 | **3b. Budget Engine** | SPEC_08 | `bcp-driver` | Token budget engine, priority ranking, summary fallback | Complete |
 | **4. Tooling** | SPEC_09 | `bcp-cli` | CLI binary (inspect, validate, encode, decode, stats) | Complete |
+| **4b. Test Suite** | SPEC_10 | `bcp-tests` | Golden files, snapshot tests, roundtrip tests, budget tests, criterion benchmarks | Complete |
 
 ## Technology Stack
 
@@ -69,3 +70,4 @@ bcp-encoder    bcp-decoder    (both depend on bcp-wire + bcp-types)
 | `clap` | 4.x | CLI argument parsing |
 | `tokio` | 1.x | Async runtime (streaming decode) |
 | `insta` | 1.x | Snapshot testing |
+| `criterion` | 0.5.x | Criterion benchmark harness |

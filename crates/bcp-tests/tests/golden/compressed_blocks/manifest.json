@@ -1,0 +1,7 @@
+{
+  "description": "CODE block with per-block zstd compression (COMPRESSED flag set on the block).",
+  "blocks": [
+    { "type": "code", "lang": "rust", "path": "src/big.rs", "compress": true,
+      "content": "fn placeholder() {}  (repeated 20 times)" }
+  ]
+}

@@ -1,0 +1,8 @@
+---
+source: crates/bcp-tests/tests/conformance.rs
+expression: output
+---
+--- index.ts [typescript] ---
+export const VERSION = '1.0.0';
+
+[user] What does this export?

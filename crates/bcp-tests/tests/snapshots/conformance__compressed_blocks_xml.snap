@@ -1,0 +1,29 @@
+---
+source: crates/bcp-tests/tests/conformance.rs
+expression: output
+---
+<context>
+<code lang="rust" path="src/big.rs">
+fn placeholder() {}
+fn placeholder() {}
+fn placeholder() {}
+fn placeholder() {}
+fn placeholder() {}
+fn placeholder() {}
+fn placeholder() {}
+fn placeholder() {}
+fn placeholder() {}
+fn placeholder() {}
+fn placeholder() {}
+fn placeholder() {}
+fn placeholder() {}
+fn placeholder() {}
+fn placeholder() {}
+fn placeholder() {}
+fn placeholder() {}
+fn placeholder() {}
+fn placeholder() {}
+fn placeholder() {}
+
+</code>
+</context>

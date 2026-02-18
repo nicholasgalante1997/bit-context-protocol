@@ -1,0 +1,12 @@
+{
+  "description": "Four block types: CODE + CONVERSATION + TOOL_RESULT + FILE_TREE.",
+  "blocks": [
+    { "type": "code", "lang": "rust", "path": "src/lib.rs", "content": "pub fn add(a: u32, b: u32) -> u32 { a + b }" },
+    { "type": "conversation", "role": "user", "content": "Add overflow protection." },
+    { "type": "tool_result", "tool_name": "cargo_test", "status": "ok", "content": "test result: ok. 3 passed; 0 failed" },
+    { "type": "file_tree", "root": "src/", "entries": [
+        { "name": "lib.rs", "kind": "file", "size": 45 },
+        { "name": "main.rs", "kind": "file", "size": 120 }
+    ]}
+  ]
+}

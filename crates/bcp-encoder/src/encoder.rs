@@ -6,6 +6,7 @@ use bcp_types::code::CodeBlock;
 use bcp_types::content_store::ContentStore;
 use bcp_types::conversation::ConversationBlock;
 use bcp_types::diff::{DiffBlock, DiffHunk};
+use bcp_types::embedding_ref::EmbeddingRefBlock;
 use bcp_types::document::DocumentBlock;
 use bcp_types::enums::{
     AnnotationKind, DataFormat, FormatHint, Lang, MediaType, Priority, Role, Status,
@@ -368,6 +369,33 @@ impl LcpEncoder {
                 target_block_id,
                 kind,
                 value: value.to_vec(),
+            }),
+        )
+    }
+
+    /// Add an EMBEDDING_REF block.
+    ///
+    /// Points to a pre-computed vector embedding stored externally (e.g.
+    /// in a vector database). The `vector_id` is an opaque byte identifier
+    /// for the vector in the external store, `source_hash` is the BLAKE3
+    /// hash of the content that was embedded (32 bytes), and `model` is
+    /// the name of the embedding model (e.g. `"text-embedding-3-small"`).
+    ///
+    /// # Wire type
+    ///
+    /// Block type `0x09` (`EMBEDDING_REF`). See RFC §4.4.
+    pub fn add_embedding_ref(
+        &mut self,
+        vector_id: &[u8],
+        source_hash: &[u8],
+        model: &str,
+    ) -> &mut Self {
+        self.push_block(
+            block_type::EMBEDDING_REF,
+            BlockContent::EmbeddingRef(EmbeddingRefBlock {
+                vector_id: vector_id.to_vec(),
+                source_hash: source_hash.to_vec(),
+                model: model.to_string(),
             }),
         )
     }

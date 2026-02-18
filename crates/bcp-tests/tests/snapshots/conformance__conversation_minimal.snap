@@ -1,0 +1,7 @@
+---
+source: crates/bcp-tests/tests/conformance.rs
+expression: output
+---
+[user] Fix the connection timeout bug.
+
+[assistant] I'll examine the pool configuration and trace the timeout path.

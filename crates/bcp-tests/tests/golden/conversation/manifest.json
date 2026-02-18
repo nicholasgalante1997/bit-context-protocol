@@ -1,0 +1,7 @@
+{
+  "description": "Two CONVERSATION blocks: a USER turn followed by an ASSISTANT reply.",
+  "blocks": [
+    { "type": "conversation", "role": "user", "content": "Fix the connection timeout bug." },
+    { "type": "conversation", "role": "assistant", "content": "I'll examine the pool configuration and trace the timeout path." }
+  ]
+}

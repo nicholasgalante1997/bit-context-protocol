@@ -1,0 +1,6 @@
+{
+  "description": "CODE block with empty content field. Tests that zero-length bytes are valid.",
+  "blocks": [
+    { "type": "code", "lang": "rust", "path": "empty.rs", "content": "" }
+  ]
+}

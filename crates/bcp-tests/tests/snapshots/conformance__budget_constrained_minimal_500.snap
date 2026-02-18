@@ -1,0 +1,13 @@
+---
+source: crates/bcp-tests/tests/conformance.rs
+expression: output
+---
+--- critical.rs [rust] ---
+// CRITICAL: must always be included
+fn critical_path() { todo!() }
+
+--- normal.rs [rust] ---
+// NORMAL priority: included when budget allows
+fn normal_path() {}
+
+[omitted: code background.rs ~17tok]

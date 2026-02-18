@@ -1,0 +1,41 @@
+[package]
+name = "bcp-tests"
+version = "0.1.0"
+edition = "2024"
+publish = false
+
+# This crate is the integration test and benchmark harness for the BCP workspace.
+# It depends on all production crates and exercises them end-to-end.
+
+[[bin]]
+name = "generate_golden"
+path = "src/bin/generate_golden.rs"
+
+[[bench]]
+name = "encode"
+harness = false
+
+[[bench]]
+name = "decode"
+harness = false
+
+[[bench]]
+name = "token_savings"
+harness = false
+
+[dev-dependencies]
+bcp-encoder = { path = "../bcp-encoder" }
+bcp-decoder = { path = "../bcp-decoder" }
+bcp-driver = { path = "../bcp-driver" }
+bcp-types = { path = "../bcp-types" }
+insta = { workspace = true }
+
+[dependencies]
+bcp-encoder = { path = "../bcp-encoder" }
+bcp-decoder = { path = "../bcp-decoder" }
+bcp-driver = { path = "../bcp-driver" }
+bcp-types = { path = "../bcp-types" }
+bcp-wire = { path = "../bcp-wire" }
+criterion = { workspace = true }
+hex = "0.4"
+blake3 = { workspace = true }

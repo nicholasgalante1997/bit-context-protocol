@@ -1,0 +1,22 @@
+---
+source: crates/bcp-tests/tests/conformance.rs
+expression: output
+---
+## src/lib.rs
+
+```rust
+pub fn add(a: u32, b: u32) -> u32 { a + b }
+```
+
+**User**: Add overflow protection.
+
+### Tool: cargo_test (ok)
+
+test result: ok. 3 passed; 0 failed
+
+### File Tree: src/
+
+```
+lib.rs (45 bytes)
+main.rs (120 bytes)
+```

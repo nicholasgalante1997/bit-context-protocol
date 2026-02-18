@@ -1,0 +1,6 @@
+{
+  "description": "CODE block with 16 KiB content. content_len uses a 3-byte LEB128 varint.",
+  "blocks": [
+    { "type": "code", "lang": "rust", "path": "large.rs", "content": "x (repeated 16384 times)" }
+  ]
+}

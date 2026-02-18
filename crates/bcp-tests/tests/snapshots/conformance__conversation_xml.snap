@@ -1,0 +1,9 @@
+---
+source: crates/bcp-tests/tests/conformance.rs
+expression: output
+---
+<context>
+<turn role="user">Fix the connection timeout bug.</turn>
+
+<turn role="assistant">I'll examine the pool configuration and trace the timeout path.</turn>
+</context>

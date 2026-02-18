@@ -1,0 +1,9 @@
+---
+source: crates/bcp-tests/tests/conformance.rs
+expression: output
+---
+--- src/a.rs [rust] ---
+fn shared() -> u32 { 42 }
+
+--- src/b.rs [rust] ---
+fn shared() -> u32 { 42 }

@@ -67,8 +67,12 @@ run = "cargo doc --workspace --no-deps"
 description = "Generate and open rustdoc in browser"
 run = "cargo doc --workspace --no-deps --open"
 
+[tasks."doc:serve"]
+description = "Serve the rustdoc documentation site on port 8080"
+run = "bunx serve -p 8080 ./target/doc"
+
 [tasks."docsite:serve"]
-description = "Serve the docsify documentation site on port 3000"
+description = "Serve the docsify documentation site on port 4040"
 run = "bunx serve -p 4040 ./docs"
 
 # ── CI (composite) ──────────────────────────────────────────────────────────

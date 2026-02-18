@@ -1,0 +1,16 @@
+{
+  "description": "One block of each of the 11 semantic block types.",
+  "blocks": [
+    { "type": "code", "lang": "go", "path": "main.go", "content": "package main" },
+    { "type": "conversation", "role": "system", "content": "You are a helpful assistant." },
+    { "type": "file_tree", "root": "/", "entries": [{ "name": "main.go", "kind": "file", "size": 12 }] },
+    { "type": "tool_result", "tool_name": "ls", "status": "ok", "content": "main.go" },
+    { "type": "document", "title": "README", "content": "# BCP", "format_hint": "markdown" },
+    { "type": "structured_data", "format": "json", "content": "{\"version\":1}" },
+    { "type": "diff", "path": "main.go", "hunks": [{ "old_start": 1, "new_start": 1, "lines": "-package old\n+package main\n" }] },
+    { "type": "annotation", "target_block_id": 0, "kind": "tag", "value": "entry-point" },
+    { "type": "embedding_ref", "vector_id": "vec-001", "source_hash": "aabbcc...(32 bytes)", "model": "text-embedding-3-small" },
+    { "type": "image", "media_type": "png", "alt_text": "Logo", "data": "(1x1 PNG bytes)" },
+    { "type": "extension", "namespace": "com.example", "type_name": "custom", "content": "hello" }
+  ]
+}

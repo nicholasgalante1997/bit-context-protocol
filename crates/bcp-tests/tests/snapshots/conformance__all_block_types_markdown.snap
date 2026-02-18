@@ -1,0 +1,42 @@
+---
+source: crates/bcp-tests/tests/conformance.rs
+expression: output
+---
+## main.go
+
+```go
+package main
+```
+
+**System**: You are a helpful assistant.
+
+### File Tree: /
+
+```
+main.go (12 bytes)
+```
+
+### Tool: ls (ok)
+
+main.go
+
+### Document: README [markdown]
+
+# BCP
+
+```json
+{"version":1}
+```
+
+### Diff: main.go
+
+```diff
+-package old
++package main
+```
+
+*[Embedding ref: model=text-embedding-3-small]*
+
+### Extension: com.example/custom
+
+hello
