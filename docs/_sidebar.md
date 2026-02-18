@@ -15,6 +15,7 @@
   - [bcp-encoder](crate-bcp-encoder.md)
   - [bcp-decoder](crate-bcp-decoder.md)
   - [bcp-driver](crate-bcp-driver.md)
+  - [bcp-cli](crate-bcp-cli.md)
 
 - **Reference**
   - [Block Types](block-types.md)

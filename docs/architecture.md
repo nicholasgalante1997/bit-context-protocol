@@ -22,7 +22,7 @@
 │  └─────────────┘    └──────────────┘    └───────────────────────┘   │
 │                                                                     │
 │  ┌──────────────────────────────────────────────────────────────┐   │
-│  │  CLI Tool (lcp)                                              │   │
+│  │  CLI Tool (bcp)                                              │   │
 │  │  inspect · validate · encode · decode · stats                │   │
 │  └──────────────────────────────────────────────────────────────┘   │
 └──────────────────────────────────────────────────────────────────────┘
@@ -45,7 +45,7 @@ bcp-encoder    bcp-decoder    (both depend on bcp-wire + bcp-types)
       bcp-driver              (depends on bcp-wire + bcp-types)
           │
           ▼
-       lcp-cli                (depends on all crates)
+       bcp-cli                (depends on all crates)
 ```
 
 ## Implementation Phases
@@ -55,8 +55,8 @@ bcp-encoder    bcp-decoder    (both depend on bcp-wire + bcp-types)
 | **1. Foundation** | SPEC_01, 02, 03 | `bcp-wire`, `bcp-types`, `bcp-encoder` | Binary wire format + encoding | Complete |
 | **2. Decode & Render** | SPEC_04, 05 | `bcp-decoder`, `bcp-driver` | Read payloads, render as text | Complete |
 | **3. Advanced** | SPEC_06, 07 | `bcp-encoder`, `bcp-decoder` | Zstd compression, BLAKE3 content addressing | Complete |
-| **3b. Budget Engine** | SPEC_08 | `bcp-driver` | Token budget engine, priority ranking, summary fallback | Planned |
-| **4. Tooling** | SPEC_09, 10 | `lcp-cli`, `tests/` | CLI binary + golden file tests | Planned |
+| **3b. Budget Engine** | SPEC_08 | `bcp-driver` | Token budget engine, priority ranking, summary fallback | Complete |
+| **4. Tooling** | SPEC_09 | `bcp-cli` | CLI binary (inspect, validate, encode, decode, stats) | Complete |
 
 ## Technology Stack
 

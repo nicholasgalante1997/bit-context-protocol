@@ -1,9 +1,9 @@
 use std::sync::Arc;
 
-use bcp_types::content_store::ContentStore;
 use bcp_types::BlockContent;
 use bcp_types::annotation::AnnotationBlock;
 use bcp_types::code::CodeBlock;
+use bcp_types::content_store::ContentStore;
 use bcp_types::conversation::ConversationBlock;
 use bcp_types::diff::{DiffBlock, DiffHunk};
 use bcp_types::document::DocumentBlock;
@@ -655,8 +655,7 @@ impl LcpEncoder {
             // Stage 3: Per-block compression (skipped for references and
             // when whole-payload compression is active).
             if !is_reference && !self.compress_payload {
-                let should_compress =
-                    pending.compress || self.compress_all_blocks;
+                let should_compress = pending.compress || self.compress_all_blocks;
                 if should_compress && body.len() >= COMPRESSION_THRESHOLD {
                     if let Some(compressed) = compression::compress(&body) {
                         body = compressed;
@@ -688,9 +687,7 @@ impl LcpEncoder {
                 Some(compressed) => {
                     output.truncate(HEADER_SIZE);
                     output.extend_from_slice(&compressed);
-                    HeaderFlags::from_raw(
-                        self.flags.raw() | HeaderFlags::COMPRESSED.raw(),
-                    )
+                    HeaderFlags::from_raw(self.flags.raw() | HeaderFlags::COMPRESSED.raw())
                 }
                 None => self.flags,
             }
@@ -1190,9 +1187,7 @@ mod tests {
 
         let mut cursor = HEADER_SIZE;
         for _ in 0..2 {
-            let (frame, n) = BlockFrame::read_from(&payload[cursor..])
-                .unwrap()
-                .unwrap();
+            let (frame, n) = BlockFrame::read_from(&payload[cursor..]).unwrap().unwrap();
             assert!(
                 frame.flags.is_compressed(),
                 "all blocks should be compressed with compress_blocks()"
@@ -1235,11 +1230,8 @@ mod tests {
         assert!(header.flags.is_compressed());
 
         // Decompress the payload to check individual blocks
-        let decompressed = crate::compression::decompress(
-            &payload[HEADER_SIZE..],
-            16 * 1024 * 1024,
-        )
-        .unwrap();
+        let decompressed =
+            crate::compression::decompress(&payload[HEADER_SIZE..], 16 * 1024 * 1024).unwrap();
 
         let (frame, _) = BlockFrame::read_from(&decompressed).unwrap().unwrap();
         assert!(
@@ -1396,11 +1388,8 @@ mod tests {
         // The payload might or might not be compressed (two 32-byte hashes
         // plus framing may not compress well), but if it is, verify it's valid.
         if header.flags.is_compressed() {
-            let decompressed = crate::compression::decompress(
-                &payload[HEADER_SIZE..],
-                16 * 1024 * 1024,
-            )
-            .unwrap();
+            let decompressed =
+                crate::compression::decompress(&payload[HEADER_SIZE..], 16 * 1024 * 1024).unwrap();
 
             let (frame, _) = BlockFrame::read_from(&decompressed).unwrap().unwrap();
             assert!(frame.flags.is_reference());
@@ -1408,7 +1397,11 @@ mod tests {
         }
 
         // Both blocks have identical TLV bodies → single store entry
-        assert_eq!(store.len(), 1, "identical blocks should produce one store entry");
+        assert_eq!(
+            store.len(),
+            1,
+            "identical blocks should produce one store entry"
+        );
     }
 
     // ── Phase 4: Cross-cutting tests ────────────────────────────────────
@@ -1485,8 +1478,8 @@ mod tests {
             .encode()
             .unwrap();
 
-        let savings_pct = 100.0
-            * (1.0 - compressed_payload.len() as f64 / uncompressed_payload.len() as f64);
+        let savings_pct =
+            100.0 * (1.0 - compressed_payload.len() as f64 / uncompressed_payload.len() as f64);
 
         assert!(
             savings_pct >= 20.0,
@@ -1516,16 +1509,11 @@ mod tests {
         );
 
         // Decompress payload to inspect individual blocks
-        let decompressed = crate::compression::decompress(
-            &payload[HEADER_SIZE..],
-            16 * 1024 * 1024,
-        )
-        .unwrap();
+        let decompressed =
+            crate::compression::decompress(&payload[HEADER_SIZE..], 16 * 1024 * 1024).unwrap();
 
         let mut cursor = 0;
-        while let Some((frame, n)) = BlockFrame::read_from(&decompressed[cursor..])
-            .unwrap()
-        {
+        while let Some((frame, n)) = BlockFrame::read_from(&decompressed[cursor..]).unwrap() {
             assert!(
                 !frame.flags.is_compressed(),
                 "individual blocks should NOT be compressed when whole-payload is active"
@@ -1555,11 +1543,7 @@ mod tests {
             .unwrap();
 
         // Decode with the same store
-        let decoded = bcp_decoder::LcpDecoder::decode_with_store(
-            &payload,
-            store.as_ref(),
-        )
-        .unwrap();
+        let decoded = bcp_decoder::LcpDecoder::decode_with_store(&payload, store.as_ref()).unwrap();
 
         assert_eq!(decoded.blocks.len(), 4);
         assert_eq!(decoded.blocks[0].block_type, bcp_types::BlockType::Code);
@@ -1568,8 +1552,14 @@ mod tests {
             "Core computation module."
         );
         assert_eq!(decoded.blocks[1].block_type, bcp_types::BlockType::Code);
-        assert_eq!(decoded.blocks[2].block_type, bcp_types::BlockType::Conversation);
-        assert_eq!(decoded.blocks[3].block_type, bcp_types::BlockType::ToolResult);
+        assert_eq!(
+            decoded.blocks[2].block_type,
+            bcp_types::BlockType::Conversation
+        );
+        assert_eq!(
+            decoded.blocks[3].block_type,
+            bcp_types::BlockType::ToolResult
+        );
 
         // Both code blocks should have the same content
         for block in &decoded.blocks[..2] {

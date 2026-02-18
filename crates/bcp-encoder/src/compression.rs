@@ -96,8 +96,7 @@ mod tests {
     fn compress_decompress_roundtrip() {
         let data = "pub fn hello() -> &'static str { \"world\" }\n".repeat(50);
         let compressed = compress(data.as_bytes()).expect("should compress");
-        let decompressed =
-            decompress(&compressed, 1024 * 1024).expect("should decompress");
+        let decompressed = decompress(&compressed, 1024 * 1024).expect("should decompress");
         assert_eq!(decompressed, data.as_bytes());
     }
 
@@ -116,10 +115,7 @@ mod tests {
     fn decompress_rejects_invalid_data() {
         let garbage = b"this is not zstd data";
         let result = decompress(garbage, 1024 * 1024);
-        assert!(matches!(
-            result,
-            Err(CompressionError::DecompressFailed(_))
-        ));
+        assert!(matches!(result, Err(CompressionError::DecompressFailed(_))));
     }
 
     #[test]

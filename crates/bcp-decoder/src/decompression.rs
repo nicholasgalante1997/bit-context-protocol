@@ -67,10 +67,7 @@ mod tests {
         let data = "x".repeat(10_000);
         let compressed = compress_test_data(data.as_bytes());
         let result = decompress(&compressed, 100);
-        assert!(matches!(
-            result,
-            Err(DecodeError::DecompressionBomb { .. })
-        ));
+        assert!(matches!(result, Err(DecodeError::DecompressionBomb { .. })));
     }
 
     #[test]

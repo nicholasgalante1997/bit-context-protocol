@@ -296,9 +296,7 @@ impl<R: AsyncRead + Unpin> StreamingDecoder<R> {
                     offset: frame.body.len(),
                 }));
             }
-            let hash: [u8; 32] = frame.body[..32]
-                .try_into()
-                .expect("length already checked");
+            let hash: [u8; 32] = frame.body[..32].try_into().expect("length already checked");
             store
                 .get(&hash)
                 .ok_or(DecodeError::UnresolvedReference { hash })?
@@ -398,9 +396,11 @@ fn end_sentinel_size(buf: &[u8]) -> Result<usize, DecodeError> {
     // flags byte
     size += 1;
     // content_len varint
-    let rest = buf.get(size..).ok_or(DecodeError::Wire(
-        bcp_wire::WireError::UnexpectedEof { offset: size },
-    ))?;
+    let rest = buf
+        .get(size..)
+        .ok_or(DecodeError::Wire(bcp_wire::WireError::UnexpectedEof {
+            offset: size,
+        }))?;
     let (_, len_size) = decode_varint(rest)?;
     size += len_size;
     Ok(size)

@@ -1,0 +1,18 @@
+[package]
+name = "bcp-cli"
+version = "0.1.0"
+edition = "2024"
+
+[[bin]]
+name = "bcp"
+path = "src/main.rs"
+
+[dependencies]
+bcp-decoder = { path = "../bcp-decoder" }
+bcp-driver  = { path = "../bcp-driver" }
+bcp-encoder = { path = "../bcp-encoder" }
+bcp-types   = { path = "../bcp-types" }
+anyhow      = { workspace = true }
+clap        = { workspace = true }
+serde       = { version = "1", features = ["derive"] }
+serde_json  = "1"

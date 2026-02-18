@@ -22,8 +22,8 @@ pub mod tool_result;
 
 pub use block::{Block, BlockContent};
 pub use block_type::BlockType;
-pub use enums::{AnnotationKind, DataFormat, FormatHint, Lang, MediaType, Priority, Role, Status};
 pub use content_store::{ContentStore, REFERENCE_BODY_SIZE};
+pub use enums::{AnnotationKind, DataFormat, FormatHint, Lang, MediaType, Priority, Role, Status};
 pub use error::TypeError;
 pub use fields::FieldWireType;
 pub use summary::Summary;

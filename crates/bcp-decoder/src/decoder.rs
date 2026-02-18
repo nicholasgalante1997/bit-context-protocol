@@ -205,9 +205,7 @@ impl LcpDecoder {
                     offset: frame.body.len(),
                 }));
             }
-            let hash: [u8; 32] = frame.body[..32]
-                .try_into()
-                .expect("length already checked");
+            let hash: [u8; 32] = frame.body[..32].try_into().expect("length already checked");
             store
                 .get(&hash)
                 .ok_or(DecodeError::UnresolvedReference { hash })?
@@ -794,7 +792,10 @@ mod tests {
         let block = &decoded.blocks[0];
         assert!(block.flags.has_summary());
         assert!(block.flags.is_compressed());
-        assert_eq!(block.summary.as_ref().unwrap().text, "Main processing function.");
+        assert_eq!(
+            block.summary.as_ref().unwrap().text,
+            "Main processing function."
+        );
         match &block.content {
             BlockContent::Code(code) => assert_eq!(code.content, big_content.as_bytes()),
             other => panic!("expected Code, got {other:?}"),
@@ -831,8 +832,8 @@ mod tests {
 
     #[test]
     fn roundtrip_content_addressing() {
-        use std::sync::Arc;
         use bcp_encoder::MemoryContentStore;
+        use std::sync::Arc;
 
         let store = Arc::new(MemoryContentStore::new());
         let payload = LcpEncoder::new()
@@ -866,8 +867,8 @@ mod tests {
 
     #[test]
     fn roundtrip_auto_dedup() {
-        use std::sync::Arc;
         use bcp_encoder::MemoryContentStore;
+        use std::sync::Arc;
 
         let store = Arc::new(MemoryContentStore::new());
         let payload = LcpEncoder::new()
@@ -894,8 +895,8 @@ mod tests {
 
     #[test]
     fn unresolved_reference_errors() {
-        use std::sync::Arc;
         use bcp_encoder::MemoryContentStore;
+        use std::sync::Arc;
 
         let encode_store = Arc::new(MemoryContentStore::new());
         let payload = LcpEncoder::new()
@@ -918,8 +919,8 @@ mod tests {
 
     #[test]
     fn roundtrip_refs_with_whole_payload_compression() {
-        use std::sync::Arc;
         use bcp_encoder::MemoryContentStore;
+        use std::sync::Arc;
 
         let store = Arc::new(MemoryContentStore::new());
         let big_content = "fn process() -> bool { true }\n".repeat(50);

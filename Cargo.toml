@@ -6,7 +6,7 @@ members = [
     "crates/bcp-encoder",
     "crates/bcp-decoder",
     "crates/bcp-driver",
-    # "crates/lcp-cli",
+    "crates/bcp-cli",
 ]
 resolver = "2"  # Always use resolver 2 (default in 2024 edition but explicit is good)
 
