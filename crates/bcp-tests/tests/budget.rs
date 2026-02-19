@@ -32,15 +32,15 @@ fn budget_critical_always_included() {
             "critical.rs",
             b"fn critical() { /* CRITICAL_MARKER_XYZ */ }",
         )
-        .with_priority(Priority::Critical)
+        .with_priority(Priority::Critical).unwrap()
         .add_code(Lang::Rust, "normal.rs", b"fn normal() { /* normal */ }")
-        .with_priority(Priority::Normal)
+        .with_priority(Priority::Normal).unwrap()
         .add_code(
             Lang::Rust,
             "low.rs",
             b"fn low_priority() { /* low */ }",
         )
-        .with_priority(Priority::Low)
+        .with_priority(Priority::Low).unwrap()
         .encode()
         .unwrap();
 
@@ -79,15 +79,15 @@ fn budget_background_omitted_first() {
     // non-indented code, so the approximation holds here.
     let payload = BcpEncoder::new()
         .add_code(Lang::Rust, "normal.rs", b"fn normal_work() { /* NORMAL_MARKER */ }")
-        .with_priority(Priority::Normal)
+        .with_priority(Priority::Normal).unwrap()
         .add_code(Lang::Rust, "low.rs", b"fn low_work() { /* LOW_MARKER_ABC */ }")
-        .with_priority(Priority::Low)
+        .with_priority(Priority::Low).unwrap()
         .add_code(
             Lang::Rust,
             "background.rs",
             b"fn background_work() { /* background_unique_marker */ }",
         )
-        .with_priority(Priority::Background)
+        .with_priority(Priority::Background).unwrap()
         .encode()
         .unwrap();
 
@@ -118,15 +118,15 @@ fn budget_background_omitted_first() {
 fn budget_no_budget_renders_all() {
     let payload = BcpEncoder::new()
         .add_code(Lang::Rust, "critical.rs", b"fn critical() {}")
-        .with_priority(Priority::Critical)
+        .with_priority(Priority::Critical).unwrap()
         .add_code(Lang::Rust, "high.rs", b"fn high() {}")
-        .with_priority(Priority::High)
+        .with_priority(Priority::High).unwrap()
         .add_code(Lang::Rust, "normal.rs", b"fn normal() {}")
-        .with_priority(Priority::Normal)
+        .with_priority(Priority::Normal).unwrap()
         .add_code(Lang::Rust, "low.rs", b"fn low() {}")
-        .with_priority(Priority::Low)
+        .with_priority(Priority::Low).unwrap()
         .add_code(Lang::Rust, "background.rs", b"fn background() {}")
-        .with_priority(Priority::Background)
+        .with_priority(Priority::Background).unwrap()
         .encode()
         .unwrap();
 
@@ -155,8 +155,8 @@ fn budget_summary_used_under_pressure() {
 
     let payload = BcpEncoder::new()
         .add_code(Lang::Rust, "high.rs", &long_content)
-        .with_summary("Short summary of high priority block.")
-        .with_priority(Priority::High)
+        .with_summary("Short summary of high priority block.").unwrap()
+        .with_priority(Priority::High).unwrap()
         .encode()
         .unwrap();
 
@@ -225,15 +225,15 @@ fn budget_priority_ordering_verified() {
 
     let payload = BcpEncoder::new()
         .add_code(Lang::Rust, "critical.rs", body_critical)
-        .with_priority(Priority::Critical)
+        .with_priority(Priority::Critical).unwrap()
         .add_code(Lang::Rust, "high.rs", body_high)
-        .with_priority(Priority::High)
+        .with_priority(Priority::High).unwrap()
         .add_code(Lang::Rust, "normal.rs", body_normal)
-        .with_priority(Priority::Normal)
+        .with_priority(Priority::Normal).unwrap()
         .add_code(Lang::Rust, "low.rs", body_low)
-        .with_priority(Priority::Low)
+        .with_priority(Priority::Low).unwrap()
         .add_code(Lang::Rust, "background.rs", body_bg)
-        .with_priority(Priority::Background)
+        .with_priority(Priority::Background).unwrap()
         .encode()
         .unwrap();
 

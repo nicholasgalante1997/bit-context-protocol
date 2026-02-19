@@ -47,8 +47,8 @@ use bcp_types::enums::{Lang, Role, Status, Priority};
 
 let payload = BcpEncoder::new()
     .add_code(Lang::Rust, "src/main.rs", b"fn main() {}")
-    .with_summary("Entry point.")
-    .with_priority(Priority::High)
+    .with_summary("Entry point.")?
+    .with_priority(Priority::High)?
     .add_conversation(Role::User, b"Fix the timeout bug.")
     .add_tool_result("ripgrep", Status::Ok, b"3 matches found.")
     .encode()?;

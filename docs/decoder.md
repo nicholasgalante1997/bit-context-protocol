@@ -59,6 +59,8 @@ pub struct DecodedPayload {
 
 Async decoder that yields blocks one at a time without buffering the entire payload. Uses a state machine internally.
 
+> **Caveat**: Whole-payload compression (`HeaderFlags::COMPRESSED`) forces the streaming decoder to buffer everything before yielding blocks. True streaming only works with uncompressed or per-block compressed payloads. See [crate-bcp-decoder](crate-bcp-decoder.md#whole-payload-compression-disables-streaming) for the full tradeoff table.
+
 ```rust
 pub struct StreamingDecoder<R: AsyncRead + Unpin> { /* ... */ }
 

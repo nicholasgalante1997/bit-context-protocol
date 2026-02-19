@@ -162,10 +162,22 @@ impl BlockFrame {
         )?;
         cursor += n;
 
-        let content_len = content_len as usize;
+        // Check for overflow before converting to usize
+        let content_len_usize = usize::try_from(content_len).map_err(|_| {
+            WireError::UnexpectedEof {
+                offset: cursor, // position after content_len varint
+            }
+        })?;
 
         // 4. Body bytes
-        let body_end = cursor + content_len;
+        let body_end = match cursor.checked_add(content_len_usize) {
+            Some(end) => end,
+            None => {
+                return Err(WireError::UnexpectedEof {
+                    offset: buf.len(),
+                })
+            }
+        };
         if buf.len() < body_end {
             return Err(WireError::UnexpectedEof { offset: buf.len() });
         }

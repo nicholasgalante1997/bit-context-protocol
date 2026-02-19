@@ -209,9 +209,9 @@ fn generate_with_summaries(golden: &Path) {
 
     let payload = BcpEncoder::new()
         .add_code(Lang::Python, server_path, server_content)
-        .with_summary("Async HTTP server entry point.")
+        .with_summary("Async HTTP server entry point.").unwrap()
         .add_tool_result("ripgrep", Status::Ok, rg_content)
-        .with_summary("1 match for ConnectionPool across 1 file.")
+        .with_summary("1 match for ConnectionPool across 1 file.").unwrap()
         .encode()
         .expect("encode with_summaries");
     write_file(&payload_path(&dir), &payload);
@@ -234,7 +234,7 @@ fn generate_compressed_blocks(golden: &Path) {
     let big_path = "src/big.rs";
     let payload = BcpEncoder::new()
         .add_code(Lang::Rust, big_path, long_code.as_bytes())
-        .with_compression()
+        .with_compression().unwrap()
         .encode()
         .expect("encode compressed_blocks");
     write_file(&payload_path(&dir), &payload);
@@ -338,19 +338,19 @@ fn generate_budget_constrained(golden: &Path) {
             critical_path,
             b"// CRITICAL: must always be included\nfn critical_path() { todo!() }",
         )
-        .with_priority(Priority::Critical)
+        .with_priority(Priority::Critical).unwrap()
         .add_code(
             Lang::Rust,
             normal_path,
             b"// NORMAL priority: included when budget allows\nfn normal_path() {}",
         )
-        .with_priority(Priority::Normal)
+        .with_priority(Priority::Normal).unwrap()
         .add_code(
             Lang::Rust,
             background_path,
             b"// BACKGROUND: omitted first under budget pressure\nfn background() {}",
         )
-        .with_priority(Priority::Background)
+        .with_priority(Priority::Background).unwrap()
         .encode()
         .expect("encode budget_constrained");
     write_file(&payload_path(&dir), &payload);

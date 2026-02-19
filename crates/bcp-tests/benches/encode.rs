@@ -50,9 +50,9 @@ fn bench_encode_with_compression(c: &mut Criterion) {
         b.iter(|| {
             BcpEncoder::new()
                 .add_code(Lang::Rust, "a.rs", &content)
-                .with_compression()
+                .with_compression().unwrap()
                 .add_code(Lang::Rust, "b.rs", &content)
-                .with_compression()
+                .with_compression().unwrap()
                 .encode()
                 .unwrap()
         });

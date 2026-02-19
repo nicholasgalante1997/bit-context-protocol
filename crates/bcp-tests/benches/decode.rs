@@ -40,9 +40,9 @@ fn bench_decode_compressed(c: &mut Criterion) {
 
     let per_block = BcpEncoder::new()
         .add_code(Lang::Rust, "a.rs", &content)
-        .with_compression()
+        .with_compression().unwrap()
         .add_code(Lang::Rust, "b.rs", &content)
-        .with_compression()
+        .with_compression().unwrap()
         .encode()
         .unwrap();
 

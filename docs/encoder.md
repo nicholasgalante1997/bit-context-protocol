@@ -64,6 +64,7 @@ All return `&mut Self` for chaining. Each appends a block to the internal list.
 | `add_structured_data` | STRUCTURED_DATA | `format`, `content` |
 | `add_diff` | DIFF | `path`, `hunks: Vec<DiffHunk>` |
 | `add_annotation` | ANNOTATION | `target_block_id`, `kind`, `value` |
+| `add_embedding_ref` | EMBEDDING_REF | `vector_id`, `source_hash`, `model` |
 | `add_image` | IMAGE | `media_type`, `alt_text`, `data` |
 | `add_extension` | EXTENSION | `namespace`, `type_name`, `content` |
 
@@ -140,7 +141,9 @@ impl BlockWriter {
 pub enum EncodeError {
     EmptyPayload,                              // No blocks added
     BlockTooLarge { size: usize, limit: usize }, // Body > 16 MiB
-    InvalidSummaryTarget,                      // Defined but unused (panics used instead)
+    NoBlockTarget { method: &'static str },    // Modifier called with no preceding block
+    MissingContentStore,                       // Content addressing without a store
+    Compression(CompressionError),             // From zstd
     Wire(WireError),                           // From bcp-wire
     Io(std::io::Error),                        // I/O failure
 }

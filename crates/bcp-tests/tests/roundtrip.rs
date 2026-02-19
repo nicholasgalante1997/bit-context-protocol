@@ -96,7 +96,7 @@ pub fn encode_from_blocks(blocks: &[Block]) -> Result<Vec<u8>, EncodeError> {
         }
 
         if let Some(summary) = &block.summary {
-            encoder.with_summary(&summary.text);
+            encoder.with_summary(&summary.text).unwrap();
         }
     }
 
@@ -332,7 +332,7 @@ fn roundtrip_extension() {
 fn roundtrip_block_with_summary() {
     let original = BcpEncoder::new()
         .add_code(Lang::Rust, "src/pool.rs", b"pub struct ConnectionPool { max: usize }")
-        .with_summary("Connection pool with configurable max connections.")
+        .with_summary("Connection pool with configurable max connections.").unwrap()
         .add_conversation(Role::User, b"How does the pool handle overflow?")
         .encode()
         .unwrap();
@@ -367,7 +367,7 @@ fn roundtrip_compressed_blocks() {
 
     let compressed = BcpEncoder::new()
         .add_code(Lang::Rust, "src/generated.rs", long_content.as_bytes())
-        .with_compression()
+        .with_compression().unwrap()
         .add_conversation(Role::User, b"Summarize this module.")
         .encode()
         .unwrap();

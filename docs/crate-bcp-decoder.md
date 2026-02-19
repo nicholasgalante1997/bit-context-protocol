@@ -150,9 +150,17 @@ ReadHeader ──▶ ReadBlocks ──▶ Done
 - **ReadBlocks**: Each `next()` call reads one block (from the async reader or from the decompressed buffer). Applies reference resolution and per-block decompression transparently. Yields `DecoderEvent::Block(block)`.
 - **Done**: Returns `None` for all subsequent calls.
 
-### Whole-Payload Compression in Streaming Mode
+### Whole-Payload Compression Disables Streaming
 
-When the header's `COMPRESSED` flag is detected, the streaming decoder buffers the entire remaining stream, decompresses it, and then parses blocks from the decompressed buffer. This is a documented tradeoff: whole-payload compression sacrifices true streaming capability for better compression ratio. Per-block compression preserves streaming.
+> **Important**: When the header's `COMPRESSED` flag is set, the streaming decoder **buffers the entire payload** before yielding any blocks. The API surface is unchanged (you still call `next()` in a loop), but memory and latency characteristics become identical to the synchronous `BcpDecoder::decode`.
+
+True incremental streaming is only achieved with **uncompressed** or **per-block compressed** payloads. If streaming is critical, use `BcpEncoder::compress_blocks()` (per-block) instead of `BcpEncoder::compress_payload()` (whole-payload).
+
+| Compression mode | Streaming? | Compression ratio |
+|-----------------|------------|-------------------|
+| None | Yes | 1:1 |
+| Per-block (`compress_blocks`) | Yes | Good |
+| Whole-payload (`compress_payload`) | **No** — full buffering | Best |
 
 ### Content Store
 

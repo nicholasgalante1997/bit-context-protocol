@@ -205,7 +205,8 @@ impl BcpDecoder {
                     offset: frame.body.len(),
                 }));
             }
-            let hash: [u8; 32] = frame.body[..32].try_into().expect("length already checked");
+            // Safe: we just checked that body.len() == 32
+            let hash: [u8; 32] = frame.body[..32].try_into().unwrap();
             store
                 .get(&hash)
                 .ok_or(DecodeError::UnresolvedReference { hash })?
@@ -363,7 +364,7 @@ mod tests {
         let decoded = roundtrip(
             BcpEncoder::new()
                 .add_code(Lang::Rust, "main.rs", b"fn main() {}")
-                .with_summary("Application entry point."),
+                .with_summary("Application entry point.").unwrap(),
         );
 
         assert_eq!(decoded.blocks.len(), 1);
@@ -388,7 +389,7 @@ mod tests {
         let decoded = roundtrip(
             BcpEncoder::new()
                 .add_code(Lang::Rust, "lib.rs", b"// code")
-                .with_priority(Priority::High),
+                .with_priority(Priority::High).unwrap(),
         );
 
         // Encoder produces CODE + ANNOTATION blocks
@@ -683,7 +684,7 @@ mod tests {
                     b"# Getting Started\n\nWelcome!",
                     FormatHint::Markdown,
                 )
-                .with_summary("Onboarding guide for new contributors."),
+                .with_summary("Onboarding guide for new contributors.").unwrap(),
         );
 
         let block = &decoded.blocks[0];
@@ -708,8 +709,8 @@ mod tests {
         let decoded = roundtrip(
             BcpEncoder::new()
                 .add_code(Lang::Rust, "src/main.rs", b"fn main() { todo!() }")
-                .with_summary("Entry point: CLI setup and server startup.")
-                .with_priority(Priority::High)
+                .with_summary("Entry point: CLI setup and server startup.").unwrap()
+                .with_priority(Priority::High).unwrap()
                 .add_conversation(Role::User, b"Fix the timeout bug.")
                 .add_conversation(Role::Assistant, b"I'll examine the pool config...")
                 .add_tool_result("ripgrep", Status::Ok, b"3 matches found."),
@@ -757,7 +758,7 @@ mod tests {
         let big_content = "fn main() { println!(\"hello world\"); }\n".repeat(50);
         let payload = BcpEncoder::new()
             .add_code(Lang::Rust, "main.rs", big_content.as_bytes())
-            .with_compression()
+            .with_compression().unwrap()
             .encode()
             .unwrap();
 
@@ -783,8 +784,8 @@ mod tests {
         let big_content = "pub fn process() -> Result<(), Error> { Ok(()) }\n".repeat(50);
         let payload = BcpEncoder::new()
             .add_code(Lang::Rust, "lib.rs", big_content.as_bytes())
-            .with_summary("Main processing function.")
-            .with_compression()
+            .with_summary("Main processing function.").unwrap()
+            .with_compression().unwrap()
             .encode()
             .unwrap();
 
@@ -839,7 +840,7 @@ mod tests {
         let payload = BcpEncoder::new()
             .set_content_store(store.clone())
             .add_code(Lang::Rust, "main.rs", b"fn main() {}")
-            .with_content_addressing()
+            .with_content_addressing().unwrap()
             .encode()
             .unwrap();
 
@@ -902,7 +903,7 @@ mod tests {
         let payload = BcpEncoder::new()
             .set_content_store(encode_store)
             .add_code(Lang::Rust, "main.rs", b"fn main() {}")
-            .with_content_addressing()
+            .with_content_addressing().unwrap()
             .encode()
             .unwrap();
 
@@ -928,7 +929,7 @@ mod tests {
             .set_content_store(store.clone())
             .compress_payload()
             .add_code(Lang::Rust, "main.rs", big_content.as_bytes())
-            .with_content_addressing()
+            .with_content_addressing().unwrap()
             .add_conversation(Role::User, b"Review this code")
             .encode()
             .unwrap();

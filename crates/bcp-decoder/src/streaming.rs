@@ -48,12 +48,21 @@ pub enum DecoderEvent {
 /// incrementally from any `AsyncRead` source (files, TCP sockets,
 /// HTTP response bodies, etc.).
 ///
-/// # Whole-payload compression
+/// # Important: whole-payload compression disables streaming
 ///
-/// When the header's `COMPRESSED` flag is set, the decoder must buffer
-/// all remaining bytes, decompress them, then parse blocks from the
-/// decompressed buffer. This is a documented tradeoff — whole-payload
-/// compression trades streaming capability for better compression ratio.
+/// **When the header's `COMPRESSED` flag is set (whole-payload
+/// compression), the streaming decoder falls back to buffering the
+/// entire payload before yielding any blocks.** This is unavoidable:
+/// zstd requires the full compressed input to decompress. The API
+/// surface remains the same (you still call `next()` in a loop), but
+/// the memory and latency characteristics become identical to
+/// [`BcpDecoder::decode`](crate::BcpDecoder::decode).
+///
+/// True incremental streaming is only achieved with **uncompressed**
+/// or **per-block compressed** payloads. If streaming is critical for
+/// your use case, prefer per-block compression
+/// ([`BcpEncoder::compress_blocks`]) over whole-payload compression
+/// ([`BcpEncoder::compress_payload`]).
 ///
 /// # Content store
 ///
@@ -450,8 +459,8 @@ mod tests {
         let mut encoder = BcpEncoder::new();
         encoder
             .add_code(Lang::Rust, "lib.rs", b"pub fn x() {}")
-            .with_summary("Function x.")
-            .with_priority(Priority::High)
+            .with_summary("Function x.").unwrap()
+            .with_priority(Priority::High).unwrap()
             .add_conversation(Role::User, b"What does x do?")
             .add_tool_result("docs", Status::Ok, b"x is a placeholder.");
 
@@ -487,7 +496,7 @@ mod tests {
     async fn streaming_handles_summary_blocks() {
         let mut enc = BcpEncoder::new();
         enc.add_code(Lang::Python, "app.py", b"print('hi')")
-            .with_summary("Prints a greeting.");
+            .with_summary("Prints a greeting.").unwrap();
         let events = stream_roundtrip(&enc).await;
 
         let block = match &events[1] {
@@ -525,7 +534,7 @@ mod tests {
         let big_content = "fn main() { println!(\"hello world\"); }\n".repeat(50);
         let mut enc = BcpEncoder::new();
         enc.add_code(Lang::Rust, "main.rs", big_content.as_bytes())
-            .with_compression();
+            .with_compression().unwrap();
         let events = stream_roundtrip(&enc).await;
 
         assert_eq!(events.len(), 2); // Header + 1 block
@@ -584,7 +593,7 @@ mod tests {
         let mut enc = BcpEncoder::new();
         enc.set_content_store(store.clone())
             .add_code(Lang::Rust, "main.rs", b"fn main() {}")
-            .with_content_addressing();
+            .with_content_addressing().unwrap();
 
         let payload = enc.encode().unwrap();
         let cursor = std::io::Cursor::new(payload);
@@ -614,7 +623,7 @@ mod tests {
         let mut encoder = BcpEncoder::new();
         encoder
             .add_code(Lang::Rust, "lib.rs", big_content.as_bytes())
-            .with_summary("Hello function.")
+            .with_summary("Hello function.").unwrap()
             .add_conversation(Role::User, b"explain");
         encoder.compress_payload();
 

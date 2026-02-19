@@ -22,7 +22,7 @@ fn full_pipeline_encode_decode_render() {
             "src/main.rs",
             b"fn main() {\n    println!(\"hello\");\n}",
         )
-        .with_summary("Entry point: prints hello.")
+        .with_summary("Entry point: prints hello.").unwrap()
         .add_tool_result(
             "ripgrep",
             Status::Ok,
@@ -97,7 +97,7 @@ fn pipeline_with_summary_verbosity() {
             "src/main.rs",
             b"fn main() {\n    println!(\"hello\");\n}",
         )
-        .with_summary("Entry point: prints hello.")
+        .with_summary("Entry point: prints hello.").unwrap()
         .add_tool_result(
             "ripgrep",
             Status::Ok,
@@ -174,11 +174,11 @@ fn roundtrip_with_budget() {
     let payload = BcpEncoder::new()
         // Block 0: Normal priority (default), has summary
         .add_code(Lang::Rust, "src/lib.rs", big_content.as_bytes())
-        .with_summary("Library exports and module declarations.")
+        .with_summary("Library exports and module declarations.").unwrap()
         // Block 2: Critical priority (annotation at block 1 targets block 0... but
         // with_priority targets the last non-annotation block)
         .add_code(Lang::Rust, "src/main.rs", big_content.as_bytes())
-        .with_priority(Priority::Critical)
+        .with_priority(Priority::Critical).unwrap()
         .encode()
         .expect("encoding should succeed");
 
@@ -219,7 +219,7 @@ fn adaptive_mode_without_budget_matches_full() {
             "src/main.rs",
             b"fn main() {\n    println!(\"hello\");\n}",
         )
-        .with_summary("Entry point.")
+        .with_summary("Entry point.").unwrap()
         .add_tool_result("ripgrep", Status::Ok, b"3 matches found.")
         .encode()
         .expect("encoding should succeed");
@@ -258,16 +258,16 @@ fn mixed_priorities_budget_allocation() {
     let payload = BcpEncoder::new()
         // Block 0: Background priority
         .add_code(Lang::Python, "bg.py", big.as_bytes())
-        .with_priority(Priority::Background)
+        .with_priority(Priority::Background).unwrap()
         // Block 2: Normal priority (default), has summary
         .add_code(Lang::Rust, "normal.rs", big.as_bytes())
-        .with_summary("Normal block summary.")
+        .with_summary("Normal block summary.").unwrap()
         // Block 4: High priority
         .add_code(Lang::Go, "high.go", big.as_bytes())
-        .with_priority(Priority::High)
+        .with_priority(Priority::High).unwrap()
         // Block 6: Critical priority
         .add_code(Lang::Java, "critical.java", big.as_bytes())
-        .with_priority(Priority::Critical)
+        .with_priority(Priority::Critical).unwrap()
         .encode()
         .expect("encoding should succeed");
 

@@ -308,10 +308,10 @@ fn apply_meta(
     priority: Option<&str>,
 ) -> Result<()> {
     if let Some(s) = summary {
-        encoder.with_summary(s);
+        encoder.with_summary(s)?;
     }
     if let Some(p) = priority {
-        encoder.with_priority(parse_priority(p)?);
+        encoder.with_priority(parse_priority(p)?)?;
     }
     Ok(())
 }

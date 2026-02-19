@@ -122,7 +122,7 @@ struct PendingBlock {
 
 ### Block Addition Methods
 
-All 12 methods follow the same pattern: construct a `BlockContent` variant, wrap it in a `PendingBlock`, push it onto the internal list, return `&mut Self` for chaining.
+All 13 methods follow the same pattern: construct a `BlockContent` variant, wrap it in a `PendingBlock`, push it onto the internal list, return `&mut Self` for chaining.
 
 | Method | Block Type | Parameters |
 |--------|-----------|------------|
@@ -136,6 +136,7 @@ All 12 methods follow the same pattern: construct a `BlockContent` variant, wrap
 | `add_structured_data` | STRUCTURED_DATA (0x06) | `format: DataFormat`, `content: &[u8]` |
 | `add_diff` | DIFF (0x07) | `path: &str`, `hunks: Vec<DiffHunk>` |
 | `add_annotation` | ANNOTATION (0x08) | `target_block_id: u32`, `kind: AnnotationKind`, `value: &[u8]` |
+| `add_embedding_ref` | EMBEDDING_REF (0x09) | `vector_id: &[u8]`, `source_hash: &[u8]`, `model: &str` |
 | `add_image` | IMAGE (0x0A) | `media_type: MediaType`, `alt_text: &str`, `data: &[u8]` |
 | `add_extension` | EXTENSION (0xFE) | `namespace: &str`, `type_name: &str`, `content: &[u8]` |
 
@@ -280,7 +281,7 @@ pub enum CompressionError {
 pub enum EncodeError {
     EmptyPayload,
     BlockTooLarge { size: usize, limit: usize },
-    InvalidSummaryTarget,
+    NoBlockTarget { method: &'static str },
     MissingContentStore,
     Compression(CompressionError),
     Wire(WireError),

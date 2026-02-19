@@ -81,15 +81,17 @@ const MAX_BLOCK_BODY_SIZE: usize = 16 * 1024 * 1024;
 /// use bcp_encoder::BcpEncoder;
 /// use bcp_types::enums::{Lang, Role, Status, Priority};
 ///
+/// # fn main() -> Result<(), Box<dyn std::error::Error>> {
 /// let payload = BcpEncoder::new()
 ///     .add_code(Lang::Rust, "src/main.rs", b"fn main() {}")
-///     .with_summary("Entry point: CLI setup and server startup.")
-///     .with_priority(Priority::High)
+///     .with_summary("Entry point: CLI setup and server startup.")?
+///     .with_priority(Priority::High)?
 ///     .add_conversation(Role::User, b"Fix the timeout bug.")
 ///     .add_conversation(Role::Assistant, b"I'll examine the pool config...")
 ///     .add_tool_result("ripgrep", Status::Ok, b"3 matches found.")
-///     .encode()
-///     .unwrap();
+///     .encode()?;
+/// # Ok(())
+/// # }
 /// ```
 ///
 /// # Output layout
@@ -445,17 +447,17 @@ impl BcpEncoder {
     /// compact UTF-8 description that the token budget engine can use as
     /// a stand-in when the full block content would exceed the budget.
     ///
-    /// # Panics
+    /// # Errors
     ///
-    /// Panics if no blocks have been added yet. Use this immediately
-    /// after an `.add_*()` call.
-    pub fn with_summary(&mut self, summary: &str) -> &mut Self {
+    /// Returns [`EncodeError::NoBlockTarget`] if no blocks have been
+    /// added yet. Use this immediately after an `.add_*()` call.
+    pub fn with_summary(&mut self, summary: &str) -> Result<&mut Self, EncodeError> {
         let block = self
             .blocks
             .last_mut()
-            .expect("with_summary called but no blocks have been added");
+            .ok_or(EncodeError::NoBlockTarget { method: "with_summary" })?;
         block.summary = Some(summary.to_string());
-        self
+        Ok(self)
     }
 
     /// Attach a priority annotation to the most recently added block.
@@ -465,15 +467,16 @@ impl BcpEncoder {
     /// The annotation's value is the priority byte (e.g. `0x02` for
     /// `Priority::High`).
     ///
-    /// # Panics
+    /// # Errors
     ///
-    /// Panics if no blocks have been added yet.
-    pub fn with_priority(&mut self, priority: Priority) -> &mut Self {
+    /// Returns [`EncodeError::NoBlockTarget`] if no blocks have been
+    /// added yet.
+    pub fn with_priority(&mut self, priority: Priority) -> Result<&mut Self, EncodeError> {
         let target_index = self
             .blocks
             .len()
             .checked_sub(1)
-            .expect("with_priority called but no blocks have been added");
+            .ok_or(EncodeError::NoBlockTarget { method: "with_priority" })?;
 
         #[allow(clippy::cast_possible_truncation)]
         let target_id = target_index as u32;
@@ -486,7 +489,7 @@ impl BcpEncoder {
                 value: vec![priority.to_wire_byte()],
             }),
         );
-        self
+        Ok(self)
     }
 
     // ── Compression modifiers ────────────────────────────────────────────
@@ -505,16 +508,17 @@ impl BcpEncoder {
     /// Has no effect if [`compress_payload`](Self::compress_payload) is
     /// also enabled — whole-payload compression takes precedence.
     ///
-    /// # Panics
+    /// # Errors
     ///
-    /// Panics if no blocks have been added yet.
-    pub fn with_compression(&mut self) -> &mut Self {
+    /// Returns [`EncodeError::NoBlockTarget`] if no blocks have been
+    /// added yet.
+    pub fn with_compression(&mut self) -> Result<&mut Self, EncodeError> {
         let block = self
             .blocks
             .last_mut()
-            .expect("with_compression called but no blocks have been added");
+            .ok_or(EncodeError::NoBlockTarget { method: "with_compression" })?;
         block.compress = true;
-        self
+        Ok(self)
     }
 
     /// Enable zstd compression for all blocks added so far and all
@@ -544,6 +548,12 @@ impl BcpEncoder {
     ///
     /// If compression doesn't reduce the total size, the payload is
     /// stored uncompressed and the header flag is not set.
+    ///
+    /// **Tradeoff**: Whole-payload compression disables incremental
+    /// streaming in `StreamingDecoder` — the decoder must buffer and
+    /// decompress the entire payload before yielding any blocks. If
+    /// streaming is important, use [`compress_blocks`](Self::compress_blocks)
+    /// instead.
     pub fn compress_payload(&mut self) -> &mut Self {
         self.compress_payload = true;
         self
@@ -582,16 +592,17 @@ impl BcpEncoder {
     /// hash reference is always below [`COMPRESSION_THRESHOLD`],
     /// reference blocks are never per-block compressed.
     ///
-    /// # Panics
+    /// # Errors
     ///
-    /// Panics if no blocks have been added yet.
-    pub fn with_content_addressing(&mut self) -> &mut Self {
+    /// Returns [`EncodeError::NoBlockTarget`] if no blocks have been
+    /// added yet.
+    pub fn with_content_addressing(&mut self) -> Result<&mut Self, EncodeError> {
         let block = self
             .blocks
             .last_mut()
-            .expect("with_content_addressing called but no blocks have been added");
+            .ok_or(EncodeError::NoBlockTarget { method: "with_content_addressing" })?;
         block.content_address = true;
-        self
+        Ok(self)
     }
 
     /// Enable automatic deduplication across all blocks.
@@ -868,7 +879,7 @@ mod tests {
     fn builder_methods_are_chainable() {
         let payload = BcpEncoder::new()
             .add_code(Lang::Rust, "src/lib.rs", b"pub fn hello() {}")
-            .with_summary("Hello function.")
+            .with_summary("Hello function.").unwrap()
             .add_conversation(Role::User, b"What does this do?")
             .encode()
             .unwrap();
@@ -881,7 +892,7 @@ mod tests {
     fn with_summary_sets_has_summary_flag() {
         let payload = BcpEncoder::new()
             .add_code(Lang::Python, "main.py", b"print('hi')")
-            .with_summary("Prints a greeting.")
+            .with_summary("Prints a greeting.").unwrap()
             .encode()
             .unwrap();
 
@@ -898,7 +909,7 @@ mod tests {
     fn with_priority_appends_annotation_block() {
         let payload = BcpEncoder::new()
             .add_code(Lang::Rust, "lib.rs", b"// code")
-            .with_priority(Priority::High)
+            .with_priority(Priority::High).unwrap()
             .encode()
             .unwrap();
 
@@ -963,18 +974,16 @@ mod tests {
                 }],
             )
             .add_annotation(0, AnnotationKind::Tag, b"important")
+            .add_embedding_ref(b"vec-001", &[0xAB; 32], "text-embedding-3-small")
             .add_image(MediaType::Png, "screenshot", b"\x89PNG\r\n")
             .add_extension("myco", "custom_block", b"custom data")
-            // EMBEDDING_REF is not in the spec's 11 encoder methods
-            // (it's a decode-only block), but we test the 11 that are specified
             .encode()
             .unwrap();
 
         assert_starts_with_magic(&payload);
         assert_ends_with_end_sentinel(&payload);
 
-        // Verify we can walk all 10 content blocks + 1 annotation = 11 frames
-        // (the add_annotation above counts as one of the 11 block addition methods)
+        // Verify we can walk all 12 content blocks (11 semantic + 1 annotation)
         let mut cursor = HEADER_SIZE;
         let mut block_count = 0;
         loop {
@@ -986,7 +995,7 @@ mod tests {
                 None => break, // END sentinel
             }
         }
-        assert_eq!(block_count, 10, "expected 10 content blocks");
+        assert_eq!(block_count, 11, "expected 11 content blocks");
     }
 
     #[test]
@@ -1092,7 +1101,7 @@ mod tests {
     fn summary_is_decodable_from_block_body() {
         let payload = BcpEncoder::new()
             .add_code(Lang::Rust, "main.rs", b"fn main() {}")
-            .with_summary("Entry point for the application.")
+            .with_summary("Entry point for the application.").unwrap()
             .encode()
             .unwrap();
 
@@ -1117,8 +1126,8 @@ mod tests {
         // Reproduces the example from RFC §12.1 / SPEC_03 §1
         let payload = BcpEncoder::new()
             .add_code(Lang::Rust, "src/main.rs", b"fn main() { todo!() }")
-            .with_summary("Entry point: CLI setup and server startup.")
-            .with_priority(Priority::High)
+            .with_summary("Entry point: CLI setup and server startup.").unwrap()
+            .with_priority(Priority::High).unwrap()
             .add_conversation(Role::User, b"Fix the timeout bug.")
             .add_conversation(Role::Assistant, b"I'll examine the pool config...")
             .add_tool_result("ripgrep", Status::Ok, b"3 matches found.")
@@ -1169,7 +1178,7 @@ mod tests {
         let big_content = "fn main() { println!(\"hello world\"); }\n".repeat(50);
         let payload = BcpEncoder::new()
             .add_code(Lang::Rust, "main.rs", big_content.as_bytes())
-            .with_compression()
+            .with_compression().unwrap()
             .encode()
             .unwrap();
 
@@ -1190,7 +1199,7 @@ mod tests {
     fn small_block_not_compressed_even_when_requested() {
         let payload = BcpEncoder::new()
             .add_code(Lang::Rust, "x.rs", b"let x = 1;")
-            .with_compression()
+            .with_compression().unwrap()
             .encode()
             .unwrap();
 
@@ -1249,7 +1258,7 @@ mod tests {
         let big_content = "pub fn hello() -> &'static str { \"world\" }\n".repeat(100);
         let payload = BcpEncoder::new()
             .add_code(Lang::Rust, "main.rs", big_content.as_bytes())
-            .with_compression()
+            .with_compression().unwrap()
             .compress_payload()
             .encode()
             .unwrap();
@@ -1292,7 +1301,7 @@ mod tests {
         let payload = BcpEncoder::new()
             .set_content_store(store.clone())
             .add_code(Lang::Rust, "main.rs", b"fn main() {}")
-            .with_content_addressing()
+            .with_content_addressing().unwrap()
             .encode()
             .unwrap();
 
@@ -1318,7 +1327,7 @@ mod tests {
     fn content_addressing_without_store_errors() {
         let result = BcpEncoder::new()
             .add_code(Lang::Rust, "main.rs", b"fn main() {}")
-            .with_content_addressing()
+            .with_content_addressing().unwrap()
             .encode();
 
         assert!(
@@ -1380,8 +1389,8 @@ mod tests {
         let payload = BcpEncoder::new()
             .set_content_store(store)
             .add_code(Lang::Rust, "main.rs", big_content.as_bytes())
-            .with_content_addressing()
-            .with_compression()
+            .with_content_addressing().unwrap()
+            .with_compression().unwrap()
             .encode()
             .unwrap();
 
@@ -1406,9 +1415,9 @@ mod tests {
             .set_content_store(store.clone())
             .compress_payload()
             .add_code(Lang::Rust, "main.rs", content.as_bytes())
-            .with_content_addressing()
+            .with_content_addressing().unwrap()
             .add_code(Lang::Rust, "main.rs", content.as_bytes())
-            .with_content_addressing()
+            .with_content_addressing().unwrap()
             .encode()
             .unwrap();
 
@@ -1502,7 +1511,7 @@ mod tests {
 
         let compressed_payload = BcpEncoder::new()
             .add_code(Lang::Rust, "config.rs", rust_code.as_bytes())
-            .with_compression()
+            .with_compression().unwrap()
             .encode()
             .unwrap();
 
@@ -1523,9 +1532,9 @@ mod tests {
         let big_content = "pub fn process() -> Result<(), Error> { Ok(()) }\n".repeat(50);
         let payload = BcpEncoder::new()
             .add_code(Lang::Rust, "a.rs", big_content.as_bytes())
-            .with_compression()
+            .with_compression().unwrap()
             .add_code(Lang::Rust, "b.rs", big_content.as_bytes())
-            .with_compression()
+            .with_compression().unwrap()
             .compress_payload()
             .encode()
             .unwrap();
@@ -1562,8 +1571,8 @@ mod tests {
             .set_content_store(store.clone())
             .auto_dedup()
             .add_code(Lang::Rust, "lib.rs", big_code.as_bytes())
-            .with_summary("Core computation module.")
-            .with_compression()
+            .with_summary("Core computation module.").unwrap()
+            .with_compression().unwrap()
             .add_code(Lang::Rust, "lib.rs", big_code.as_bytes()) // auto-dedup
             .add_conversation(Role::User, b"Review this code")
             .add_tool_result("clippy", Status::Ok, b"No warnings")

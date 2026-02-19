@@ -36,7 +36,7 @@ pub enum CompressionError {
 ///   EncodeError
 ///   ├── EmptyPayload         ← no blocks were added before .encode()
 ///   ├── BlockTooLarge        ← single block body exceeds size limit
-///   ├── InvalidSummaryTarget ← with_summary called with no preceding block
+///   ├── NoBlockTarget        ← modifier called with no preceding block
 ///   ├── MissingContentStore  ← content addressing enabled without a store
 ///   ├── Compression(…)       ← from zstd compress/decompress
 ///   ├── Wire(WireError)      ← from bcp-wire serialization
@@ -50,8 +50,8 @@ pub enum EncodeError {
     #[error("block body exceeds maximum size ({size} bytes, limit {limit})")]
     BlockTooLarge { size: usize, limit: usize },
 
-    #[error("with_summary called but no blocks have been added yet")]
-    InvalidSummaryTarget,
+    #[error("{method} called but no blocks have been added yet")]
+    NoBlockTarget { method: &'static str },
 
     #[error("content addressing requires a content store (call set_content_store first)")]
     MissingContentStore,
