@@ -1,0 +1,41 @@
+name: "[bcp-rs](CI - Clippy)"
+
+on:
+  push:
+    branches: [main, gh-actions]
+  pull_request:
+    branches: [main]
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  clippy:
+    name: Run Clippy with pedantic lints
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: 1.93.0
+          components: clippy
+
+      - name: Cache Rust dependencies
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: |
+            crates/bcp-wire
+            crates/bcp-types
+            crates/bcp-encoder
+            crates/bcp-decoder
+            crates/bcp-driver
+            crates/bcp-cli
+            crates/bcp-tests
+
+      - name: Run Clippy on all workspace crates
+        run: cargo clippy --workspace -- -W clippy::pedantic
