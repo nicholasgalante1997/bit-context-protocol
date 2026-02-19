@@ -1,0 +1,13 @@
+{
+  "ollama": {
+    "url": "http://localhost:11434",
+    "defaultModel": "qwen3-coder-next:latest"
+  },
+  "models": {
+    "path": "/home/nicks-dgx/.loclaude/models"
+  },
+  "docker": {
+    "composeFile": "./docker-compose.yml",
+    "gpu": true
+  }
+}

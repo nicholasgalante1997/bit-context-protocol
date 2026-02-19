@@ -1,9 +1,23 @@
+# =============================================================================
+# MISE TASK RUNNER CONFIGURATION
+# =============================================================================
+# Mise is a task runner that provides convenient shortcuts for common operations.
+# Run 'mise tasks' to see all available tasks.
+#
+# Documentation: https://mise.jdx.dev/
+# Install: curl https://mise.jdx.dev/install.sh | sh
+# =============================================================================
+
 [tools]
 bun = "1.3.9"
 rust = "1.93.0"
 
 [env]
+_.file = [".env"]
+_.path = ["{{config_root}}/node_modules/.bin"]
 CARGO_TERM_COLOR = "always"
+
+[tasks]
 
 # ── Build ────────────────────────────────────────────────────────────────────
 
@@ -90,3 +104,65 @@ cargo test --workspace
 [tasks.clean]
 description = "Remove build artifacts"
 run = "cargo clean"
+
+# ── loclaude ────────────────────────────────────────────────────────────────────
+
+# ── loclaude - Docker ────────────────────────────────────────────────────────────────────
+
+[tasks."lc:docker:up"]
+description = "Start Ollama and Open WebUI containers"
+run = "loclaude docker-up"
+
+[tasks."lc:docker:down"]
+description = "Stop all containers"
+run = "loclaude docker-down"
+
+[tasks."lc:docker:restart"]
+description = "Restart all containers"
+run = "loclaude docker-restart"
+
+[tasks."lc:docker:status"]
+description = "Show container status"
+run = "loclaude docker-status"
+
+[tasks."lc:docker:logs"]
+description = "Follow container logs"
+run = "loclaude docker-logs --follow"
+
+# ── loclaude - Model Management ────────────────────────────────────────────────────────────────────
+
+[tasks."lc:models"]
+description = "List installed models"
+run = "loclaude models"
+
+[tasks."lc:pull"]
+description = "Pull a model (usage: mise run pull <model-name>)"
+run = "loclaude models-pull {{arg(name='model')}}"
+
+[tasks."lc:pull:recommended"]
+description = "Pull the recommended coding model"
+run = "loclaude models-pull qwen3-coder:30b"
+
+# ── loclaude - Claude Code ────────────────────────────────────────────────────────────────────
+
+[tasks."lc:claude"]
+description = "Run Claude Code with local Ollama"
+run = "loclaude run"
+
+[tasks."lc:claude:model"]
+description = "Run Claude with specific model (usage: mise run claude:model <model>)"
+run = "loclaude run -m {{arg(name='model')}}"
+
+# ── loclaude - Diagnostics ────────────────────────────────────────────────────────────────────
+
+[tasks."lc:doctor"]
+description = "Check system requirements"
+run = "loclaude doctor"
+
+[tasks."lc:gpu"]
+description = "Check GPU status (requires NVIDIA GPU)"
+run = "docker exec ollama nvidia-smi"
+
+[tasks."lc:config"]
+description = "Show current configuration"
+run = "loclaude config"
