@@ -17,10 +17,10 @@
 
 ## Purpose and Role in the Protocol
 
-The driver is the consumption endpoint of the LCP pipeline. Where the decoder converts binary bytes into typed `Block` structs, the driver converts those structs into the text that an LLM actually reads:
+The driver is the consumption endpoint of the BCP pipeline. Where the decoder converts binary bytes into typed `Block` structs, the driver converts those structs into the text that an LLM actually reads:
 
 ```
-.lcp binary ──▶ bcp-decoder ──▶ Vec<Block> ──▶ bcp-driver ──▶ model-ready text ──▶ LLM
+.bcp binary ──▶ bcp-decoder ──▶ Vec<Block> ──▶ bcp-driver ──▶ model-ready text ──▶ LLM
                                                     │
                                               DriverConfig
                                               (mode, verbosity, token_budget, include_types)
@@ -36,12 +36,12 @@ The driver also handles **budget-aware degradation**: when a `token_budget` is s
 
 ---
 
-## Core Trait: `LcpDriver`
+## Core Trait: `BcpDriver`
 
 The public interface is a single-method trait, keeping the contract minimal and easy to implement for custom drivers:
 
 ```rust
-pub trait LcpDriver {
+pub trait BcpDriver {
     fn render(
         &self,
         blocks: &[Block],
@@ -78,7 +78,7 @@ Input blocks ──▶ Remove Annotation blocks (metadata-only, never rendered)
              ──▶ If zero blocks remain → return DriverError::EmptyInput
 ```
 
-Annotations are the LCP protocol's mechanism for attaching metadata to other blocks (priority hints, tags, summaries). They're never rendered as visible text — their data is consumed by the budget engine during the scan pass. The driver suppresses them unconditionally.
+Annotations are the BCP protocol's mechanism for attaching metadata to other blocks (priority hints, tags, summaries). They're never rendered as visible text — their data is consumed by the budget engine during the scan pass. The driver suppresses them unconditionally.
 
 The `original_indices` vector maps each filtered block's position back to its index in the original unfiltered block list. This is essential for the budget engine to correctly resolve annotation targets.
 
@@ -414,12 +414,12 @@ pub enum DriverError {
 The full pipeline, including budget-aware rendering:
 
 ```rust
-use bcp_encoder::LcpEncoder;
-use bcp_decoder::LcpDecoder;
-use bcp_driver::{DefaultDriver, DriverConfig, LcpDriver, OutputMode, Verbosity};
+use bcp_encoder::BcpEncoder;
+use bcp_decoder::BcpDecoder;
+use bcp_driver::{DefaultDriver, DriverConfig, BcpDriver, OutputMode, Verbosity};
 use bcp_types::enums::{Lang, Priority, Role, Status};
 
-let payload = LcpEncoder::new()
+let payload = BcpEncoder::new()
     .add_code(Lang::Rust, "src/main.rs", b"fn main() { ... }")
     .with_summary("Entry point: prints hello.")
     .with_priority(Priority::Critical)
@@ -427,7 +427,7 @@ let payload = LcpEncoder::new()
     .add_conversation(Role::User, b"Fix the timeout bug.")
     .encode()?;
 
-let decoded = LcpDecoder::decode(&payload)?;
+let decoded = BcpDecoder::decode(&payload)?;
 
 let driver = DefaultDriver;
 
@@ -450,10 +450,10 @@ let text = driver.render(&decoded.blocks, &config)?;
 
 ```
 src/
-├── lib.rs              → Re-exports DefaultDriver, LcpDriver, DriverConfig, OutputMode,
+├── lib.rs              → Re-exports DefaultDriver, BcpDriver, DriverConfig, OutputMode,
 │                         Verbosity, RenderDecision, TokenEstimator, etc.
 ├── config.rs           → DriverConfig, OutputMode, ModelFamily, Verbosity
-├── driver.rs           → LcpDriver trait, DefaultDriver (13 tests)
+├── driver.rs           → BcpDriver trait, DefaultDriver (13 tests)
 ├── render_xml.rs       → XmlRenderer + shared display helpers (4 tests)
 ├── render_markdown.rs  → MarkdownRenderer (3 tests)
 ├── render_minimal.rs   → MinimalRenderer (3 tests)

@@ -9,8 +9,8 @@ pub enum WireError {
     #[error("unexpected end of input at offset {offset}")]
     UnexpectedEof { offset: usize },
 
-    /// Magic number did not match "LCP\0".
-    #[error("invalid magic number: expected 0x4C435000, got {found:#010X}")]
+    /// Magic number did not match "BCP\0".
+    #[error("invalid magic number: expected 0x42435000, got {found:#010X}")]
     InvalidMagic { found: u32 },
 
     /// Unsupported format version.

@@ -5,7 +5,7 @@ use bcp_types::block_type::BlockType;
 use bcp_types::content_store::ContentStore;
 use bcp_types::summary::Summary;
 use bcp_wire::block_frame::{BlockFlags, BlockFrame};
-use bcp_wire::header::{HEADER_SIZE, LcpHeader};
+use bcp_wire::header::{HEADER_SIZE, BcpHeader};
 use bcp_wire::varint::decode_varint;
 use tokio::io::{AsyncRead, AsyncReadExt};
 
@@ -20,7 +20,7 @@ use crate::error::DecodeError;
 /// is encountered.
 ///
 /// ```text
-///   Header(LcpHeader)
+///   Header(BcpHeader)
 ///   Block(Block)
 ///   Block(Block)
 ///   Block(Block)
@@ -29,7 +29,7 @@ use crate::error::DecodeError;
 #[derive(Clone, Debug)]
 pub enum DecoderEvent {
     /// The file header has been parsed and validated.
-    Header(LcpHeader),
+    Header(BcpHeader),
 
     /// A block has been fully decoded.
     Block(Block),
@@ -43,7 +43,7 @@ pub enum DecoderEvent {
 /// are fully received. Backpressure is handled naturally: the stream
 /// only reads the next block when the caller awaits the next item.
 ///
-/// Unlike the synchronous [`LcpDecoder`](crate::LcpDecoder) which
+/// Unlike the synchronous [`BcpDecoder`](crate::BcpDecoder) which
 /// requires the entire payload in memory, `StreamingDecoder` reads
 /// incrementally from any `AsyncRead` source (files, TCP sockets,
 /// HTTP response bodies, etc.).
@@ -163,7 +163,7 @@ impl<R: AsyncRead + Unpin> StreamingDecoder<R> {
             DecodeError::InvalidHeader(bcp_wire::WireError::UnexpectedEof { offset: 0 })
         })?;
 
-        let header = LcpHeader::read_from(&header_buf).map_err(DecodeError::InvalidHeader)?;
+        let header = BcpHeader::read_from(&header_buf).map_err(DecodeError::InvalidHeader)?;
 
         // Whole-payload decompression: buffer everything, decompress.
         if header.flags.is_compressed() {
@@ -409,12 +409,12 @@ fn end_sentinel_size(buf: &[u8]) -> Result<usize, DecodeError> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use bcp_encoder::LcpEncoder;
+    use bcp_encoder::BcpEncoder;
     use bcp_types::enums::{Lang, Priority, Role, Status};
 
     /// Helper: encode a payload and decode it via the streaming decoder,
     /// collecting all events into a Vec.
-    async fn stream_roundtrip(encoder: &LcpEncoder) -> Vec<DecoderEvent> {
+    async fn stream_roundtrip(encoder: &BcpEncoder) -> Vec<DecoderEvent> {
         let payload = encoder.encode().unwrap();
         let cursor = std::io::Cursor::new(payload);
         let reader = tokio::io::BufReader::new(cursor);
@@ -431,7 +431,7 @@ mod tests {
 
     #[tokio::test]
     async fn streaming_produces_header_then_blocks() {
-        let mut enc = LcpEncoder::new();
+        let mut enc = BcpEncoder::new();
         enc.add_code(Lang::Rust, "main.rs", b"fn main() {}")
             .add_conversation(Role::User, b"hello");
         let events = stream_roundtrip(&enc).await;
@@ -447,7 +447,7 @@ mod tests {
 
     #[tokio::test]
     async fn streaming_matches_sync_decoder() {
-        let mut encoder = LcpEncoder::new();
+        let mut encoder = BcpEncoder::new();
         encoder
             .add_code(Lang::Rust, "lib.rs", b"pub fn x() {}")
             .with_summary("Function x.")
@@ -458,7 +458,7 @@ mod tests {
         let payload = encoder.encode().unwrap();
 
         // Sync decode
-        let sync_decoded = crate::LcpDecoder::decode(&payload).unwrap();
+        let sync_decoded = crate::BcpDecoder::decode(&payload).unwrap();
 
         // Streaming decode
         let events = stream_roundtrip(&encoder).await;
@@ -485,7 +485,7 @@ mod tests {
 
     #[tokio::test]
     async fn streaming_handles_summary_blocks() {
-        let mut enc = LcpEncoder::new();
+        let mut enc = BcpEncoder::new();
         enc.add_code(Lang::Python, "app.py", b"print('hi')")
             .with_summary("Prints a greeting.");
         let events = stream_roundtrip(&enc).await;
@@ -501,7 +501,7 @@ mod tests {
 
     #[tokio::test]
     async fn streaming_empty_body_blocks() {
-        let mut enc = LcpEncoder::new();
+        let mut enc = BcpEncoder::new();
         enc.add_extension("ns", "t", b"");
         let events = stream_roundtrip(&enc).await;
 
@@ -510,7 +510,7 @@ mod tests {
 
     #[tokio::test]
     async fn streaming_terminates_at_end_sentinel() {
-        let mut enc = LcpEncoder::new();
+        let mut enc = BcpEncoder::new();
         enc.add_conversation(Role::User, b"hi");
         let events = stream_roundtrip(&enc).await;
 
@@ -523,7 +523,7 @@ mod tests {
     #[tokio::test]
     async fn streaming_per_block_compression_roundtrip() {
         let big_content = "fn main() { println!(\"hello world\"); }\n".repeat(50);
-        let mut enc = LcpEncoder::new();
+        let mut enc = BcpEncoder::new();
         enc.add_code(Lang::Rust, "main.rs", big_content.as_bytes())
             .with_compression();
         let events = stream_roundtrip(&enc).await;
@@ -547,7 +547,7 @@ mod tests {
     #[tokio::test]
     async fn streaming_whole_payload_compression_roundtrip() {
         let big_content = "use std::io;\n".repeat(100);
-        let mut enc = LcpEncoder::new();
+        let mut enc = BcpEncoder::new();
         enc.add_code(Lang::Rust, "a.rs", big_content.as_bytes())
             .add_code(Lang::Rust, "b.rs", big_content.as_bytes());
         enc.compress_payload();
@@ -581,7 +581,7 @@ mod tests {
     #[tokio::test]
     async fn streaming_content_addressing_roundtrip() {
         let store = Arc::new(bcp_encoder::MemoryContentStore::new());
-        let mut enc = LcpEncoder::new();
+        let mut enc = BcpEncoder::new();
         enc.set_content_store(store.clone())
             .add_code(Lang::Rust, "main.rs", b"fn main() {}")
             .with_content_addressing();
@@ -611,7 +611,7 @@ mod tests {
     #[tokio::test]
     async fn streaming_matches_sync_compressed() {
         let big_content = "pub fn hello() -> &'static str { \"world\" }\n".repeat(100);
-        let mut encoder = LcpEncoder::new();
+        let mut encoder = BcpEncoder::new();
         encoder
             .add_code(Lang::Rust, "lib.rs", big_content.as_bytes())
             .with_summary("Hello function.")
@@ -621,7 +621,7 @@ mod tests {
         let payload = encoder.encode().unwrap();
 
         // Sync decode
-        let sync_decoded = crate::LcpDecoder::decode(&payload).unwrap();
+        let sync_decoded = crate::BcpDecoder::decode(&payload).unwrap();
 
         // Streaming decode
         let events = stream_roundtrip(&encoder).await;

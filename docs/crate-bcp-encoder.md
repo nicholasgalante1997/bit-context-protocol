@@ -2,7 +2,7 @@
 
 <span class="badge badge-green">Complete</span> <span class="badge badge-blue">Phase 3</span>
 
-> The producer-facing API. Tools, agents, and MCP servers use this crate to construct LCP binary payloads from structured Rust types. Supports per-block zstd compression, whole-payload compression, and BLAKE3 content-addressed deduplication.
+> The producer-facing API. Tools, agents, and MCP servers use this crate to construct BCP binary payloads from structured Rust types. Supports per-block zstd compression, whole-payload compression, and BLAKE3 content-addressed deduplication.
 
 ## Crate Info
 
@@ -17,7 +17,7 @@
 
 ## Purpose and Role in the Protocol
 
-The encoder sits at the beginning of the LCP data flow. The RFC (Section 5.6) specifies a builder API that allows any tool — an AI coding assistant, an MCP server, a CLI utility — to produce LCP payloads without understanding the binary wire format details. The encoder handles:
+The encoder sits at the beginning of the BCP data flow. The RFC (Section 5.6) specifies a builder API that allows any tool — an AI coding assistant, an MCP server, a CLI utility — to produce BCP payloads without understanding the binary wire format details. The encoder handles:
 
 1. **Type-safe block construction**: Each `add_*` method accepts strongly-typed Rust arguments (not raw bytes), preventing malformed blocks at compile time
 2. **TLV body serialization**: Delegates to `BlockContent::encode_body()` (from `bcp-types`) to convert struct fields into wire-format TLV bytes
@@ -36,10 +36,10 @@ The encoder is the first half of the "compression opportunity" described in RFC 
 ### Basic encoding
 
 ```rust
-use bcp_encoder::LcpEncoder;
+use bcp_encoder::BcpEncoder;
 use bcp_types::enums::{Lang, Role, Status, Priority};
 
-let payload = LcpEncoder::new()
+let payload = BcpEncoder::new()
     .add_code(Lang::Rust, "src/main.rs", content.as_bytes())
     .with_summary("Entry point: CLI setup and server startup.")
     .with_priority(Priority::High)
@@ -53,17 +53,17 @@ let payload = LcpEncoder::new()
 ### With compression
 
 ```rust
-use bcp_encoder::LcpEncoder;
+use bcp_encoder::BcpEncoder;
 use bcp_types::enums::Lang;
 
 // Per-block compression (individual large blocks)
-let payload = LcpEncoder::new()
+let payload = BcpEncoder::new()
     .add_code(Lang::Rust, "lib.rs", large_file.as_bytes())
     .with_compression()   // compress this block if >= 256 bytes
     .encode()?;
 
 // Whole-payload compression (compress everything after header)
-let payload = LcpEncoder::new()
+let payload = BcpEncoder::new()
     .add_code(Lang::Rust, "a.rs", file_a.as_bytes())
     .add_code(Lang::Rust, "b.rs", file_b.as_bytes())
     .compress_payload()
@@ -74,20 +74,20 @@ let payload = LcpEncoder::new()
 
 ```rust
 use std::sync::Arc;
-use bcp_encoder::{LcpEncoder, MemoryContentStore};
+use bcp_encoder::{BcpEncoder, MemoryContentStore};
 use bcp_types::enums::Lang;
 
 let store = Arc::new(MemoryContentStore::new());
 
 // Explicit content addressing
-let payload = LcpEncoder::new()
+let payload = BcpEncoder::new()
     .set_content_store(store.clone())
     .add_code(Lang::Rust, "lib.rs", content.as_bytes())
     .with_content_addressing()  // replace body with 32-byte hash
     .encode()?;
 
 // Auto-dedup (duplicate blocks become references automatically)
-let payload = LcpEncoder::new()
+let payload = BcpEncoder::new()
     .set_content_store(store.clone())
     .auto_dedup()
     .add_code(Lang::Rust, "a.rs", content.as_bytes())  // inline (first)
@@ -97,12 +97,12 @@ let payload = LcpEncoder::new()
 
 ---
 
-## LcpEncoder
+## BcpEncoder
 
 ### Internal Structure
 
 ```rust
-pub struct LcpEncoder {
+pub struct BcpEncoder {
     blocks: Vec<PendingBlock>,
     flags: HeaderFlags,
     compress_payload: bool,
@@ -294,8 +294,8 @@ pub enum EncodeError {
 
 ```
 src/
-├── lib.rs            → Re-exports LcpEncoder, MemoryContentStore, EncodeError, CompressionError
-├── encoder.rs        → LcpEncoder builder, PendingBlock, encode() pipeline (49 tests)
+├── lib.rs            → Re-exports BcpEncoder, MemoryContentStore, EncodeError, CompressionError
+├── encoder.rs        → BcpEncoder builder, PendingBlock, encode() pipeline (49 tests)
 ├── block_writer.rs   → BlockWriter TLV field serializer (5 tests)
 ├── compression.rs    → COMPRESSION_THRESHOLD, compress(), decompress() (7 tests)
 ├── content_store.rs  → MemoryContentStore (9 tests)

@@ -21,12 +21,12 @@
 //! - `code_aware_estimator_savings`: CodeAwareEstimator, asserts ≥25% savings
 //! - `xml_mode_vs_markdown`: XML mode vs markdown, asserts ≥5% savings
 
-use bcp_decoder::LcpDecoder;
+use bcp_decoder::BcpDecoder;
 use bcp_driver::{
-    CodeAwareEstimator, DefaultDriver, DriverConfig, HeuristicEstimator, LcpDriver, OutputMode,
+    CodeAwareEstimator, DefaultDriver, DriverConfig, HeuristicEstimator, BcpDriver, OutputMode,
     TokenEstimator,
 };
-use bcp_encoder::LcpEncoder;
+use bcp_encoder::BcpEncoder;
 use bcp_types::block::{Block, BlockContent};
 use bcp_types::enums::{Lang, Role, Status};
 use bcp_types::file_tree::{FileEntry, FileEntryKind};
@@ -143,7 +143,7 @@ func main() {\n\
 
 // ── Payload builder ───────────────────────────────────────────────────────────
 
-/// Build a representative LCP payload with 5 code files, 2 conversation turns,
+/// Build a representative BCP payload with 5 code files, 2 conversation turns,
 /// 1 tool result, and 1 file tree. This is the canonical input for all three
 /// token-savings tests.
 fn build_representative_payload() -> Vec<u8> {
@@ -173,7 +173,7 @@ fn build_representative_payload() -> Vec<u8> {
         },
     ];
 
-    LcpEncoder::new()
+    BcpEncoder::new()
         .add_code(Lang::Rust, "src/main.rs", RUST_MAIN)
         .add_code(Lang::Rust, "src/lib.rs", RUST_LIB)
         .add_code(Lang::TypeScript, "src/index.ts", TS_INDEX)
@@ -201,7 +201,7 @@ fn build_representative_payload() -> Vec<u8> {
 
 /// Render the same semantic content as conventional markdown.
 ///
-/// This is the baseline that LCP's Minimal mode is compared against. It
+/// This is the baseline that BCP's Minimal mode is compared against. It
 /// faithfully represents what a naive context injection tool would produce:
 /// a section header per block, fenced code blocks with the language tag and
 /// a path comment inside, role headers and separators for conversation turns,
@@ -224,7 +224,7 @@ fn build_representative_payload() -> Vec<u8> {
 /// That is roughly 6 extra lines (~80 chars) of overhead per file before the
 /// content even starts. For 5 code files this totals ~400 chars of pure chrome.
 /// Combined with the conversation turn headers and tool result formatting, the
-/// structural overhead accounts for ~30–35% of total tokens — exactly what LCP
+/// structural overhead accounts for ~30–35% of total tokens — exactly what BCP
 /// eliminates.
 fn build_equivalent_markdown(blocks: &[Block]) -> String {
     let mut parts: Vec<String> = Vec::new();
@@ -388,7 +388,7 @@ fn lang_name(lang: Lang) -> &'static str {
 #[test]
 fn token_savings_vs_markdown() {
     let payload = build_representative_payload();
-    let decoded = LcpDecoder::decode(&payload).unwrap();
+    let decoded = BcpDecoder::decode(&payload).unwrap();
     let estimator = HeuristicEstimator;
 
     let minimal_config = DriverConfig {
@@ -423,7 +423,7 @@ fn code_aware_estimator_savings() {
     // absolute terms, but the higher per-character rate can modestly shift
     // the percentage. We assert ≥25% to stay robust across this variance.
     let payload = build_representative_payload();
-    let decoded = LcpDecoder::decode(&payload).unwrap();
+    let decoded = BcpDecoder::decode(&payload).unwrap();
     let estimator = CodeAwareEstimator;
 
     let minimal_config = DriverConfig {
@@ -455,7 +455,7 @@ fn xml_mode_vs_markdown() {
     // eliminates some markdown overhead (no triple-backtick fences, no path
     // comments inside the code body). We assert ≥5% savings vs markdown.
     let payload = build_representative_payload();
-    let decoded = LcpDecoder::decode(&payload).unwrap();
+    let decoded = BcpDecoder::decode(&payload).unwrap();
     let estimator = HeuristicEstimator;
 
     let xml_config = DriverConfig {

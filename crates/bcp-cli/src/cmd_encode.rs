@@ -1,7 +1,7 @@
 /// Implementation of `bcp encode`.
 ///
-/// Parses a JSON manifest describing a sequence of LCP blocks and serialises
-/// them into a binary `.lcp` payload using `LcpEncoder`. The manifest path is
+/// Parses a JSON manifest describing a sequence of BCP blocks and serialises
+/// them into a binary `.bcp` payload using `BcpEncoder`. The manifest path is
 /// the sole positional argument; the output file is required via `-o`.
 ///
 /// # Manifest format
@@ -80,7 +80,7 @@ use std::path::Path;
 use std::sync::Arc;
 
 use anyhow::{Context, Result, anyhow};
-use bcp_encoder::{LcpEncoder, MemoryContentStore};
+use bcp_encoder::{BcpEncoder, MemoryContentStore};
 use bcp_types::enums::{DataFormat, FormatHint, Lang, Priority, Role, Status};
 
 use crate::EncodeArgs;
@@ -150,7 +150,7 @@ enum ManifestBlock {
 
 /// Run the `bcp encode` command.
 ///
-/// Reads and parses the JSON manifest, builds an [`LcpEncoder`], applies
+/// Reads and parses the JSON manifest, builds an [`BcpEncoder`], applies
 /// compression / dedup flags, and writes the encoded payload to the output
 /// file. Prints a one-line summary (`Wrote N bytes to <path>`) on success.
 ///
@@ -158,7 +158,7 @@ enum ManifestBlock {
 ///
 /// Returns an error if the manifest cannot be read or parsed, if a block
 /// references a `content_file` that does not exist, if an enum value
-/// (lang, role, priority, …) is unrecognised, or if `LcpEncoder::encode`
+/// (lang, role, priority, …) is unrecognised, or if `BcpEncoder::encode`
 /// fails (e.g. zstd compression error).
 pub fn run(args: &EncodeArgs) -> Result<()> {
     let manifest_src = fs::read_to_string(&args.input)
@@ -169,7 +169,7 @@ pub fn run(args: &EncodeArgs) -> Result<()> {
 
     let manifest_dir = args.input.parent().unwrap_or_else(|| Path::new("."));
 
-    let mut encoder = LcpEncoder::new();
+    let mut encoder = BcpEncoder::new();
 
     // When --dedup is requested a MemoryContentStore must be provided before
     // any encoding; auto_dedup() alone without a store would error at encode().
@@ -193,7 +193,7 @@ pub fn run(args: &EncodeArgs) -> Result<()> {
 
     let bytes = encoder
         .encode()
-        .with_context(|| "LcpEncoder::encode failed")?;
+        .with_context(|| "BcpEncoder::encode failed")?;
 
     fs::write(&args.output, &bytes)
         .with_context(|| format!("cannot write {}", args.output.display()))?;
@@ -206,7 +206,7 @@ pub fn run(args: &EncodeArgs) -> Result<()> {
 
 /// Adds a single manifest block to `encoder`, resolving content from inline
 /// text or a `content_file` path relative to `manifest_dir`.
-fn apply_block(encoder: &mut LcpEncoder, block: &ManifestBlock, manifest_dir: &Path) -> Result<()> {
+fn apply_block(encoder: &mut BcpEncoder, block: &ManifestBlock, manifest_dir: &Path) -> Result<()> {
     match block {
         ManifestBlock::Code {
             lang,
@@ -303,7 +303,7 @@ fn apply_block(encoder: &mut LcpEncoder, block: &ManifestBlock, manifest_dir: &P
 
 /// Applies `summary` and `priority` metadata to the most recently added block.
 fn apply_meta(
-    encoder: &mut LcpEncoder,
+    encoder: &mut BcpEncoder,
     summary: Option<&str>,
     priority: Option<&str>,
 ) -> Result<()> {

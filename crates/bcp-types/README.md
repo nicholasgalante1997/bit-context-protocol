@@ -2,7 +2,7 @@
 
 **Action 3: Create the directory structure:**
 ```
-crates/lcp-types/src/
+crates/bcp-types/src/
 ├── lib.rs
 ├── error.rs
 ├── block_type.rs

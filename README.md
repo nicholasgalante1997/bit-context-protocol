@@ -1,8 +1,8 @@
 # Bit Context Protocol
 
-Reference implementation of the **LLM Context Pack (LCP)** binary format — a compact, typed serialization format for structured LLM context. Where traditional approaches waste 30-50% of tokens on markdown fences, JSON envelopes, and repeated path prefixes, LCP packs the same semantic content into a binary representation that decodes into token-efficient text.
+Reference implementation of the **Bit Context Protocol (BCP)** binary format — a compact, typed serialization format for structured LLM context. Where traditional approaches waste 30-50% of tokens on markdown fences, JSON envelopes, and repeated path prefixes, BCP packs the same semantic content into a binary representation that decodes into token-efficient text.
 
-Based on [LCP RFC Draft v0.1.0](./RFC.txt) (February 2026).
+Based on [BCP RFC Draft v0.1.0](./RFC.txt) (February 2026).
 
 ## Status
 
@@ -21,7 +21,7 @@ Based on [LCP RFC Draft v0.1.0](./RFC.txt) (February 2026).
 ## Data Flow
 
 ```
-Tool / Agent ──▶ bcp-encoder ──▶ .lcp binary ──▶ bcp-decoder ──▶ Vec<Block> ──▶ bcp-driver ──▶ LLM
+Tool / Agent ──▶ bcp-encoder ──▶ .bcp binary ──▶ bcp-decoder ──▶ Vec<Block> ──▶ bcp-driver ──▶ LLM
 ```
 
 ## Quick Start
@@ -42,10 +42,10 @@ mise run ci           # Full pipeline: fmt check → clippy → test
 ### Encode a Payload
 
 ```rust
-use bcp_encoder::LcpEncoder;
+use bcp_encoder::BcpEncoder;
 use bcp_types::enums::{Lang, Role, Status, Priority};
 
-let payload = LcpEncoder::new()
+let payload = BcpEncoder::new()
     .add_code(Lang::Rust, "src/main.rs", b"fn main() {}")
     .with_summary("Entry point.")
     .with_priority(Priority::High)
@@ -57,9 +57,9 @@ let payload = LcpEncoder::new()
 ### Decode a Payload
 
 ```rust
-use bcp_decoder::LcpDecoder;
+use bcp_decoder::BcpDecoder;
 
-let decoded = LcpDecoder::decode(&payload)?;
+let decoded = BcpDecoder::decode(&payload)?;
 for block in &decoded.blocks {
     println!("{:?}", block.content);
 }
@@ -68,7 +68,7 @@ for block in &decoded.blocks {
 ### Render to Model-Ready Text
 
 ```rust
-use bcp_driver::{DefaultDriver, LcpDriver, DriverConfig, OutputMode, Verbosity};
+use bcp_driver::{DefaultDriver, BcpDriver, DriverConfig, OutputMode, Verbosity};
 
 let driver = DefaultDriver;
 let config = DriverConfig {
@@ -83,12 +83,12 @@ let text = driver.render(&decoded.blocks, &config)?;
 ### CLI
 
 ```bash
-bcp inspect payload.lcp               # Block summary table
-bcp validate payload.lcp              # Structural correctness check
-bcp decode payload.lcp --mode xml     # Render as XML-tagged text
-bcp decode payload.lcp --mode minimal # Render as minimal delimiters
-bcp stats payload.lcp                 # Size and token efficiency stats
-bcp encode manifest.json -o out.lcp   # Create .lcp from JSON manifest
+bcp inspect payload.bcp               # Block summary table
+bcp validate payload.bcp              # Structural correctness check
+bcp decode payload.bcp --mode xml     # Render as XML-tagged text
+bcp decode payload.bcp --mode minimal # Render as minimal delimiters
+bcp stats payload.bcp                 # Size and token efficiency stats
+bcp encode manifest.json -o out.bcp   # Create .bcp from JSON manifest
 ```
 
 ### Streaming Decode
@@ -115,10 +115,10 @@ bit-context-protocol/
 │   ├── bcp-encoder/    Builder API → binary payload
 │   ├── bcp-decoder/    Binary payload → typed structs (sync + async)
 │   ├── bcp-driver/     Typed structs → token-efficient text
-│   ├── bcp-cli/        Command-line tool for .lcp files
+│   ├── bcp-cli/        Command-line tool for .bcp files
 │   └── bcp-tests/      Integration tests, golden fixtures, benchmarks
 ├── docs/               Docsify documentation site
-├── RFC.txt             LCP RFC Draft v0.1.0
+├── RFC.txt             BCP RFC Draft v0.1.0
 ├── mise.toml           Tool versions + task runner
 └── Cargo.toml          Workspace root
 ```

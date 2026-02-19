@@ -7,6 +7,6 @@ pub mod streaming;
 
 mod decompression;
 
-pub use decoder::{DecodedPayload, LcpDecoder};
+pub use decoder::{DecodedPayload, BcpDecoder};
 pub use error::DecodeError;
 pub use streaming::{DecoderEvent, StreamingDecoder};

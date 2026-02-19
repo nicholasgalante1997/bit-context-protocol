@@ -1,7 +1,7 @@
 use bcp_types::error::TypeError;
 use bcp_wire::WireError;
 
-/// Errors that can occur during LCP payload decoding.
+/// Errors that can occur during BCP payload decoding.
 ///
 /// The decoder validates at multiple levels: header integrity, block
 /// frame structure, TLV body fields, stream termination, decompression,
@@ -30,7 +30,7 @@ use bcp_wire::WireError;
 pub enum DecodeError {
     /// The 8-byte file header failed validation.
     ///
-    /// This wraps a [`WireError`] from `LcpHeader::read_from` — the
+    /// This wraps a [`WireError`] from `BcpHeader::read_from` — the
     /// inner error distinguishes between bad magic, unsupported version,
     /// and non-zero reserved byte.
     #[error("invalid header: {0}")]
@@ -61,7 +61,7 @@ pub enum DecodeError {
 
     /// The payload ended without an END sentinel block (type=0xFF).
     ///
-    /// Every valid LCP payload must terminate with an END block. If the
+    /// Every valid BCP payload must terminate with an END block. If the
     /// byte stream is exhausted before encountering one, the payload is
     /// considered truncated.
     #[error("payload does not end with END sentinel")]
@@ -105,8 +105,8 @@ pub enum DecodeError {
     /// A block has the `IS_REFERENCE` flag but no content store was
     /// provided to the decoder.
     ///
-    /// Use [`LcpDecoder::decode_with_store`] instead of
-    /// [`LcpDecoder::decode`] when decoding payloads that contain
+    /// Use [`BcpDecoder::decode_with_store`] instead of
+    /// [`BcpDecoder::decode`] when decoding payloads that contain
     /// content-addressed blocks.
     #[error("block has IS_REFERENCE flag but no content store was provided")]
     MissingContentStore,

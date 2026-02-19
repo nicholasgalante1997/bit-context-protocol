@@ -17,7 +17,7 @@
 
 ## Purpose and Role in the Protocol
 
-`bcp-tests` is the integration testing harness for the entire BCP stack. It exercises every crate end-to-end — encoding, wire format, decoding, rendering, and token estimation — from a single test runner. Rather than testing crates in isolation, it verifies the *pipeline*: that bytes flow correctly from `LcpEncoder` through `LcpDecoder` through `DefaultDriver` and produce expected textual output.
+`bcp-tests` is the integration testing harness for the entire BCP stack. It exercises every crate end-to-end — encoding, wire format, decoding, rendering, and token estimation — from a single test runner. Rather than testing crates in isolation, it verifies the *pipeline*: that bytes flow correctly from `BcpEncoder` through `BcpDecoder` through `DefaultDriver` and produce expected textual output.
 
 The crate has three distinct responsibilities:
 
@@ -29,8 +29,8 @@ The crate has three distinct responsibilities:
 │  │  Golden Fixture  │  │  Snapshot Tests  │  │  Benchmarks  │  │
 │  │  Generator       │  │  (insta)         │  │  (criterion) │  │
 │  │                  │  │                  │  │              │  │
-│  │  Binary that     │  │  Read .lcp file  │  │  Throughput  │  │
-│  │  writes .lcp     │  │  Decode + Render │  │  encode/     │  │
+│  │  Binary that     │  │  Read .bcp file  │  │  Throughput  │  │
+│  │  writes .bcp     │  │  Decode + Render │  │  encode/     │  │
 │  │  fixtures to     │  │  Compare vs      │  │  decode/     │  │
 │  │  tests/golden/   │  │  .snap files     │  │  estimate    │  │
 │  └─────────────────┘  └──────────────────┘  └──────────────┘  │
@@ -50,7 +50,7 @@ The crate has three distinct responsibilities:
 
 ## Golden File Fixtures
 
-Fixtures live in `tests/golden/`. Each fixture directory contains a `manifest.json` (human-readable description) and a `payload.lcp` (binary, committed). The generator binary writes them; the snapshot tests read them.
+Fixtures live in `tests/golden/`. Each fixture directory contains a `manifest.json` (human-readable description) and a `payload.bcp` (binary, committed). The generator binary writes them; the snapshot tests read them.
 
 ```text
 tests/golden/
@@ -80,7 +80,7 @@ cargo run --bin generate_golden -p bcp-tests
 git diff tests/golden/   # review the binary diff
 ```
 
-The generator uses `LcpEncoder` for semantic fixtures and hand-crafts bytes for `unknown_block_type` and `trailing_data` using the wire-layer `BlockFrame` API.
+The generator uses `BcpEncoder` for semantic fixtures and hand-crafts bytes for `unknown_block_type` and `trailing_data` using the wire-layer `BlockFrame` API.
 
 ---
 
@@ -113,11 +113,11 @@ Verifies encode → decode → encode produces byte-identical output for all 11 
 └─────────────────────────────┴──────────────────────────────────────────┘
 ```
 
-The `encode_from_blocks` helper reconstructs an `LcpEncoder` payload from a `&[Block]` slice by pattern-matching all `BlockContent` variants. Byte-identical assertions hold for uncompressed payloads; compressed payloads compare decoded content only (the `COMPRESSED` flag is a storage hint, not semantic content).
+The `encode_from_blocks` helper reconstructs an `BcpEncoder` payload from a `&[Block]` slice by pattern-matching all `BlockContent` variants. Byte-identical assertions hold for uncompressed payloads; compressed payloads compare decoded content only (the `COMPRESSED` flag is a storage hint, not semantic content).
 
 ### `tests/conformance.rs` — 27 tests
 
-Snapshot tests using `insta`. Each test reads a golden `.lcp` file, decodes it, renders it in one output mode, and compares against a committed `.snap` file.
+Snapshot tests using `insta`. Each test reads a golden `.bcp` file, decodes it, renders it in one output mode, and compares against a committed `.snap` file.
 
 ```text
 ┌────────────────────────────┬──────┬────────────┬─────────┐
@@ -149,7 +149,7 @@ cargo insta review
 cargo test -p bcp-tests --test conformance
 ```
 
-Snapshot files live in `tests/snapshots/` and are committed alongside the `.lcp` fixtures. Any renderer change will produce a clear diff.
+Snapshot files live in `tests/snapshots/` and are committed alongside the `.bcp` fixtures. Any renderer change will produce a clear diff.
 
 ### `tests/budget.rs` — 6 tests
 
@@ -185,7 +185,7 @@ Verifies the token budget engine's priority-based degradation rules.
 
 ### `tests/token_savings.rs` — 3 tests
 
-Benchmarks the core value proposition: LCP Minimal mode uses ≥30% fewer tokens than equivalent raw markdown for the same semantic content.
+Benchmarks the core value proposition: BCP Minimal mode uses ≥30% fewer tokens than equivalent raw markdown for the same semantic content.
 
 ```text
 ┌─────────────────────────────────┬────────────────────────────────────────┐

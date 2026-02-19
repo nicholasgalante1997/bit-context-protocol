@@ -24,7 +24,7 @@ pub enum CompressionError {
     DecompressionBomb { actual: usize, limit: usize },
 }
 
-/// Errors that can occur during LCP payload encoding.
+/// Errors that can occur during BCP payload encoding.
 ///
 /// The encoder validates structural constraints (non-empty payload,
 /// block size limits, summary targeting) and propagates lower-level

@@ -10,7 +10,7 @@ Low-level binary format errors. Used directly by `bcp-wire` and wrapped by downs
 |---------|---------|---------|
 | `VarintTooLong` | Varint exceeds 10 bytes without termination | Malformed or corrupted varint data |
 | `UnexpectedEof { offset }` | Input ends before a complete read | Truncated payload or buffer too short |
-| `InvalidMagic { found }` | First 4 bytes are not `LCP\0` | Not an LCP file, or wrong byte order |
+| `InvalidMagic { found }` | First 4 bytes are not `BCP\0` | Not a BCP file, or wrong byte order |
 | `UnsupportedVersion { major, minor }` | Major version is not 1 | Future version or corrupted header |
 | `ReservedNonZero { offset, value }` | Reserved byte at offset is not 0x00 | Corrupted header or incompatible producer |
 | `Io(io::Error)` | Underlying I/O failure | File read/write errors |

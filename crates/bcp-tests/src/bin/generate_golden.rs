@@ -34,7 +34,7 @@
 use std::path::Path;
 use std::sync::Arc;
 
-use bcp_encoder::{LcpEncoder, MemoryContentStore};
+use bcp_encoder::{BcpEncoder, MemoryContentStore};
 use bcp_types::diff::DiffHunk;
 use bcp_types::enums::{
     AnnotationKind, DataFormat, FormatHint, Lang, MediaType, Priority, Role, Status,
@@ -74,7 +74,7 @@ fn write_manifest(dir: &Path, json: &str) {
 }
 
 fn payload_path(dir: &Path) -> std::path::PathBuf {
-    dir.join("payload.lcp")
+    dir.join("payload.bcp")
 }
 
 // ── Fixture generators ────────────────────────────────────────────────────────
@@ -90,15 +90,15 @@ fn generate_simple_code(golden: &Path) {
       "type": "code",
       "lang": "rust",
       "path": "src/main.rs",
-      "content": "fn main() {\n    println!(\"Hello, LCP!\");\n}"
+      "content": "fn main() {\n    println!(\"Hello, BCP!\");\n}"
     }
   ]
 }"#,
     );
 
     let path = "src/main.rs";
-    let content = b"fn main() {\n    println!(\"Hello, LCP!\");\n}";
-    let payload = LcpEncoder::new()
+    let content = b"fn main() {\n    println!(\"Hello, BCP!\");\n}";
+    let payload = BcpEncoder::new()
         .add_code(Lang::Rust, path, content)
         .encode()
         .expect("encode simple_code");
@@ -118,7 +118,7 @@ fn generate_conversation(golden: &Path) {
 }"#,
     );
 
-    let payload = LcpEncoder::new()
+    let payload = BcpEncoder::new()
         .add_conversation(Role::User, b"Fix the connection timeout bug.")
         .add_conversation(
             Role::Assistant,
@@ -152,7 +152,7 @@ fn generate_mixed_blocks(golden: &Path) {
     let lib_name = "lib.rs";
     let main_name = "main.rs";
 
-    let payload = LcpEncoder::new()
+    let payload = BcpEncoder::new()
         .add_code(Lang::Rust, lib_path, lib_content)
         .add_conversation(Role::User, b"Add overflow protection.")
         .add_tool_result(
@@ -207,7 +207,7 @@ fn generate_with_summaries(golden: &Path) {
     let server_content = b"import asyncio\n\nasync def serve():\n    pass";
     let rg_content = b"src/main.rs:42: ConnectionPool::new()";
 
-    let payload = LcpEncoder::new()
+    let payload = BcpEncoder::new()
         .add_code(Lang::Python, server_path, server_content)
         .with_summary("Async HTTP server entry point.")
         .add_tool_result("ripgrep", Status::Ok, rg_content)
@@ -232,7 +232,7 @@ fn generate_compressed_blocks(golden: &Path) {
     );
 
     let big_path = "src/big.rs";
-    let payload = LcpEncoder::new()
+    let payload = BcpEncoder::new()
         .add_code(Lang::Rust, big_path, long_code.as_bytes())
         .with_compression()
         .encode()
@@ -256,7 +256,7 @@ fn generate_compressed_payload(golden: &Path) {
 
     let ts_path = "index.ts";
     let ts_content = b"export const VERSION = '1.0.0';";
-    let payload = LcpEncoder::new()
+    let payload = BcpEncoder::new()
         .add_code(Lang::TypeScript, ts_path, ts_content)
         .add_conversation(Role::User, b"What does this export?")
         .compress_payload()
@@ -273,7 +273,7 @@ fn generate_content_addressed(golden: &Path) {
     let path_a = "src/a.rs";
     let path_b = "src/b.rs";
 
-    let payload = LcpEncoder::new()
+    let payload = BcpEncoder::new()
         .set_content_store(Arc::clone(&store) as Arc<dyn bcp_types::content_store::ContentStore>)
         .auto_dedup()
         .add_code(Lang::Rust, path_a, shared_content)
@@ -332,7 +332,7 @@ fn generate_budget_constrained(golden: &Path) {
     let normal_path = "normal.rs";
     let background_path = "background.rs";
 
-    let payload = LcpEncoder::new()
+    let payload = BcpEncoder::new()
         .add_code(
             Lang::Rust,
             critical_path,
@@ -397,7 +397,7 @@ fn generate_all_block_types(golden: &Path) {
     let json_content = ["{", r#""version":1}"#].concat();
     let diff_old = ["-package old\n+package", " main\n"].concat();
 
-    let payload = LcpEncoder::new()
+    let payload = BcpEncoder::new()
         .add_code(Lang::Go, &go_file, go_content.as_bytes())
         .add_conversation(Role::System, b"You are a helpful assistant.")
         .add_file_tree(
@@ -449,7 +449,7 @@ fn generate_edge_empty_content(golden: &Path) {
     );
 
     let empty_path = "empty.rs";
-    let payload = LcpEncoder::new()
+    let payload = BcpEncoder::new()
         .add_code(Lang::Rust, empty_path, b"")
         .encode()
         .expect("encode empty_content");
@@ -470,7 +470,7 @@ fn generate_edge_large_varint(golden: &Path) {
     );
 
     let large_path = "large.rs";
-    let payload = LcpEncoder::new()
+    let payload = BcpEncoder::new()
         .add_code(Lang::Rust, large_path, &large_content)
         .encode()
         .expect("encode large_varint");
@@ -479,7 +479,7 @@ fn generate_edge_large_varint(golden: &Path) {
 
 fn generate_edge_unknown_block_type(golden: &Path) {
     use bcp_wire::block_frame::{BlockFlags, BlockFrame};
-    use bcp_wire::header::{HEADER_SIZE, HeaderFlags, LcpHeader};
+    use bcp_wire::header::{HEADER_SIZE, HeaderFlags, BcpHeader};
 
     let dir = golden.join("edge_cases/unknown_block_type");
 
@@ -487,7 +487,7 @@ fn generate_edge_unknown_block_type(golden: &Path) {
     // encoded correctly. block_type=0xFF (END) must be LEB128-encoded as
     // [0xFF, 0x01], not a raw 0xFF byte.
     let mut payload = vec![0u8; HEADER_SIZE];
-    LcpHeader::new(HeaderFlags::NONE)
+    BcpHeader::new(HeaderFlags::NONE)
         .write_to(&mut payload)
         .expect("write header");
 
@@ -512,7 +512,7 @@ fn generate_edge_trailing_data(golden: &Path) {
     let dir = golden.join("edge_cases/trailing_data");
 
     let t_path = "t.rs";
-    let mut payload = LcpEncoder::new()
+    let mut payload = BcpEncoder::new()
         .add_code(Lang::Rust, t_path, b"// trailing")
         .encode()
         .expect("encode for trailing_data base");

@@ -41,7 +41,7 @@ impl BlockFlags {
 /// Known block type IDs.
 ///
 /// These are the semantic type tags that appear on the wire.
-/// The `lcp-types` crate defines the full typed structs for each.
+/// The `bcp-types` crate defines the full typed structs for each.
 pub mod block_type {
     pub const CODE: u8 = 0x01;
     pub const CONVERSATION: u8 = 0x02;

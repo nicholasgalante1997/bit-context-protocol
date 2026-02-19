@@ -19,7 +19,7 @@ use crate::fields::{decode_bytes_value, decode_field_header, encode_bytes_field,
 /// └──────────┴───────────┴───────────┴───────────────────────────┘
 /// ```
 ///
-/// The `content` field is opaque — the LCP decoder does not attempt to
+/// The `content` field is opaque — the BCP decoder does not attempt to
 /// parse it. Only consumers that understand the `namespace/type_name`
 /// pair will interpret the content.
 #[derive(Clone, Debug, PartialEq, Eq)]

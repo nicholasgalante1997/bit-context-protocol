@@ -1,7 +1,7 @@
 //! Conformance tests: golden fixture files decoded and rendered to insta snapshots.
 //!
-//! Each test reads a pre-built binary `.lcp` fixture from `tests/golden/`,
-//! decodes it with [`LcpDecoder`], and renders the result with [`DefaultDriver`]
+//! Each test reads a pre-built binary `.bcp` fixture from `tests/golden/`,
+//! decodes it with [`BcpDecoder`], and renders the result with [`DefaultDriver`]
 //! in one of the three output modes (XML, Markdown, Minimal). The rendered
 //! string is compared against an insta snapshot stored in `tests/snapshots/`.
 //!
@@ -26,28 +26,28 @@
 
 use std::path::Path;
 
-use bcp_decoder::LcpDecoder;
-use bcp_driver::{DefaultDriver, DriverConfig, LcpDriver, OutputMode};
+use bcp_decoder::BcpDecoder;
+use bcp_driver::{DefaultDriver, DriverConfig, BcpDriver, OutputMode};
 use bcp_encoder::MemoryContentStore;
 use bcp_types::ContentStore;
 use insta::assert_snapshot;
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
-/// Read a golden fixture payload from `tests/golden/<fixture>/payload.lcp`.
+/// Read a golden fixture payload from `tests/golden/<fixture>/payload.bcp`.
 fn golden_payload(fixture: &str) -> Vec<u8> {
     let manifest_dir = Path::new(env!("CARGO_MANIFEST_DIR"));
     let path = manifest_dir
         .join("tests/golden")
         .join(fixture)
-        .join("payload.lcp");
+        .join("payload.bcp");
     std::fs::read(&path)
         .unwrap_or_else(|e| panic!("failed to read golden fixture {}: {e}", path.display()))
 }
 
 /// Decode a payload and render it with the given output mode using default config.
 fn render(payload: &[u8], mode: OutputMode) -> String {
-    let decoded = LcpDecoder::decode(payload)
+    let decoded = BcpDecoder::decode(payload)
         .unwrap_or_else(|e| panic!("decode failed for mode {mode:?}: {e}"));
     let config = DriverConfig {
         mode,
@@ -215,7 +215,7 @@ fn decode_content_addressed() -> Vec<bcp_types::block::Block> {
     let payload = golden_payload("content_addressed");
     let store = MemoryContentStore::new();
     store.put(b"fn shared() -> u32 { 42 }");
-    LcpDecoder::decode_with_store(&payload, &store)
+    BcpDecoder::decode_with_store(&payload, &store)
         .expect("content_addressed decode failed")
         .blocks
 }
@@ -266,7 +266,7 @@ fn content_addressed_minimal() {
 
 fn budget_render(mode: OutputMode, token_budget: u32) -> String {
     let payload = golden_payload("budget_constrained");
-    let decoded = LcpDecoder::decode(&payload).expect("budget_constrained decode failed");
+    let decoded = BcpDecoder::decode(&payload).expect("budget_constrained decode failed");
     let config = DriverConfig {
         mode,
         token_budget: Some(token_budget),
@@ -307,7 +307,7 @@ use bcp_types::BlockType;
 
 fn all_block_types_text_only(mode: OutputMode) -> String {
     let payload = golden_payload("all_block_types");
-    let decoded = LcpDecoder::decode(&payload).expect("all_block_types decode failed");
+    let decoded = BcpDecoder::decode(&payload).expect("all_block_types decode failed");
     let config = DriverConfig {
         mode,
         include_types: Some(vec![

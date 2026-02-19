@@ -4,5 +4,5 @@ expression: output
 ---
 --- src/main.rs [rust] ---
 fn main() {
-    println!("Hello, LCP!");
+    println!("Hello, BCP!");
 }

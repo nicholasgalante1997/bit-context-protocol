@@ -2,7 +2,7 @@
 
 <span class="badge badge-green">SPEC_01</span> <span class="badge badge-mauve">bcp-wire</span>
 
-> The lowest-level building blocks of the LCP binary format. Every other crate depends on these primitives.
+> The lowest-level building blocks of the BCP binary format. Every other crate depends on these primitives.
 
 ## Overview
 
@@ -70,14 +70,14 @@ pub fn decode_varint(buf: &[u8]) -> Result<(u64, usize), WireError>;
 
 ## File Header
 
-Every LCP payload begins with a fixed 8-byte header.
+Every BCP payload begins with a fixed 8-byte header.
 
 ### Wire Layout
 
 ```
 Offset  Size     Description
 ──────  ───────  ──────────────────────────────────
-0x00    4 bytes  Magic number: "LCP\0" (0x4C, 0x43, 0x50, 0x00)
+0x00    4 bytes  Magic number: "BCP\0" (0x42, 0x43, 0x50, 0x00)
 0x04    1 byte   Version major (current: 1)
 0x05    1 byte   Version minor (current: 0)
 0x06    1 byte   Flags bitfield
@@ -95,7 +95,7 @@ Offset  Size     Description
 ### API
 
 ```rust
-pub const LCP_MAGIC: [u8; 4] = [0x4C, 0x43, 0x50, 0x00];
+pub const BCP_MAGIC: [u8; 4] = [0x42, 0x43, 0x50, 0x00];
 pub const HEADER_SIZE: usize = 8;
 pub const VERSION_MAJOR: u8 = 1;
 pub const VERSION_MINOR: u8 = 0;
@@ -111,13 +111,13 @@ impl HeaderFlags {
     pub fn has_index(self) -> bool;
 }
 
-pub struct LcpHeader {
+pub struct BcpHeader {
     pub version_major: u8,
     pub version_minor: u8,
     pub flags: HeaderFlags,
 }
 
-impl LcpHeader {
+impl BcpHeader {
     pub fn new(flags: HeaderFlags) -> Self;           // Current version, given flags
     pub fn write_to(&self, buf: &mut [u8]) -> Result<(), WireError>;
     pub fn read_from(buf: &[u8]) -> Result<Self, WireError>;
@@ -129,13 +129,13 @@ impl LcpHeader {
 `read_from` validates in this order for the most useful error messages:
 
 1. Buffer length >= 8 bytes (`UnexpectedEof`)
-2. Magic number matches `LCP\0` (`InvalidMagic`)
+2. Magic number matches `BCP\0` (`InvalidMagic`)
 3. Major version is 1 (`UnsupportedVersion`)
 4. Reserved byte is 0x00 (`ReservedNonZero`)
 
 ### Implementation Notes
 
-- Magic is compared as raw bytes (`buf[0..4] != LCP_MAGIC`), not as a `u32`, to avoid endianness concerns
+- Magic is compared as raw bytes (`buf[0..4] != BCP_MAGIC`), not as a `u32`, to avoid endianness concerns
 - The `u32::from_le_bytes` conversion is only used in the `InvalidMagic` error for readable hex display
 - `HeaderFlags` implements `Default` (all bits zero)
 

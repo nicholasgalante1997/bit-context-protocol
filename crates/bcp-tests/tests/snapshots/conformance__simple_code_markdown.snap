@@ -6,6 +6,6 @@ expression: output
 
 ```rust
 fn main() {
-    println!("Hello, LCP!");
+    println!("Hello, BCP!");
 }
 ```

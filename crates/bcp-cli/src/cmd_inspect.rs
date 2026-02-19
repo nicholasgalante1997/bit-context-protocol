@@ -1,6 +1,6 @@
 /// Implementation of `bcp inspect`.
 ///
-/// Reads an LCP file, decodes all blocks, and prints a structured summary
+/// Reads a BCP file, decodes all blocks, and prints a structured summary
 /// to stdout. Optionally shows block body content (`--show-body`) or a raw
 /// hex dump (`--show-hex`). When `--block N` is given, only the block at
 /// index N is shown.
@@ -8,7 +8,7 @@
 /// # Output format
 ///
 /// ```text
-/// Header: LCP v1.0, flags=0x00, 4 blocks
+/// Header: BCP v1.0, flags=0x00, 4 blocks
 /// Block 0: CODE [rust] path="src/main.rs" (23 bytes)
 ///          Summary: "Entry point with CLI setup"
 /// Block 1: CONVERSATION [user] (19 bytes)
@@ -20,7 +20,7 @@
 use std::fs;
 
 use anyhow::{Context, Result};
-use bcp_decoder::LcpDecoder;
+use bcp_decoder::BcpDecoder;
 use bcp_types::block::BlockContent;
 use bcp_types::enums::AnnotationKind;
 
@@ -30,18 +30,18 @@ use crate::InspectArgs;
 ///
 /// # Errors
 ///
-/// Returns an error if the file cannot be read or the LCP payload is
+/// Returns an error if the file cannot be read or the BCP payload is
 /// structurally invalid (malformed header, truncated blocks, etc.).
 pub fn run(args: &InspectArgs) -> Result<()> {
     let bytes =
         fs::read(&args.file).with_context(|| format!("cannot read {}", args.file.display()))?;
 
-    let decoded = LcpDecoder::decode(&bytes)
+    let decoded = BcpDecoder::decode(&bytes)
         .with_context(|| format!("failed to decode {}", args.file.display()))?;
 
     let header = &decoded.header;
     println!(
-        "Header: LCP v{}.{}, flags=0x{:02X}, {} block{}",
+        "Header: BCP v{}.{}, flags=0x{:02X}, {} block{}",
         header.version_major,
         header.version_minor,
         header.flags.raw(),

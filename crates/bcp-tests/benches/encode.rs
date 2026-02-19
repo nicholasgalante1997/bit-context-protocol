@@ -1,4 +1,4 @@
-use bcp_encoder::LcpEncoder;
+use bcp_encoder::BcpEncoder;
 use bcp_types::enums::{Lang, Role, Status};
 use criterion::{BenchmarkId, Criterion, Throughput, criterion_group, criterion_main};
 
@@ -7,7 +7,7 @@ fn bench_encode_small(c: &mut Criterion) {
 
     c.bench_function("encode_small", |b| {
         b.iter(|| {
-            LcpEncoder::new()
+            BcpEncoder::new()
                 .add_code(Lang::Rust, "src/main.rs", content)
                 .encode()
                 .unwrap()
@@ -20,7 +20,7 @@ fn bench_encode_medium(c: &mut Criterion) {
 
     c.bench_function("encode_medium", |b| {
         b.iter(|| {
-            LcpEncoder::new()
+            BcpEncoder::new()
                 .add_code(Lang::Rust, "a.rs", &content)
                 .add_code(Lang::TypeScript, "b.ts", &content)
                 .add_conversation(Role::User, b"Fix the bug.")
@@ -38,7 +38,7 @@ fn bench_encode_with_compression(c: &mut Criterion) {
 
     group.bench_function("no_compression", |b| {
         b.iter(|| {
-            LcpEncoder::new()
+            BcpEncoder::new()
                 .add_code(Lang::Rust, "a.rs", &content)
                 .add_code(Lang::Rust, "b.rs", &content)
                 .encode()
@@ -48,7 +48,7 @@ fn bench_encode_with_compression(c: &mut Criterion) {
 
     group.bench_function("per_block", |b| {
         b.iter(|| {
-            LcpEncoder::new()
+            BcpEncoder::new()
                 .add_code(Lang::Rust, "a.rs", &content)
                 .with_compression()
                 .add_code(Lang::Rust, "b.rs", &content)
@@ -60,7 +60,7 @@ fn bench_encode_with_compression(c: &mut Criterion) {
 
     group.bench_function("whole_payload", |b| {
         b.iter(|| {
-            LcpEncoder::new()
+            BcpEncoder::new()
                 .add_code(Lang::Rust, "a.rs", &content)
                 .add_code(Lang::Rust, "b.rs", &content)
                 .compress_payload()
@@ -84,7 +84,7 @@ fn bench_encode_throughput(c: &mut Criterion) {
             &content,
             |b, content| {
                 b.iter(|| {
-                    LcpEncoder::new()
+                    BcpEncoder::new()
                         .add_code(Lang::Rust, "large.rs", content)
                         .encode()
                         .unwrap()

@@ -2,7 +2,7 @@
 
 <span class="badge badge-green">Complete</span> <span class="badge badge-blue">Phase 3</span>
 
-> The consumer-facing API. Reads LCP binary payloads and produces typed Rust structs. Provides both synchronous (buffered) and asynchronous (streaming) decode paths. Transparently handles zstd decompression and BLAKE3 content-addressed reference resolution.
+> The consumer-facing API. Reads BCP binary payloads and produces typed Rust structs. Provides both synchronous (buffered) and asynchronous (streaming) decode paths. Transparently handles zstd decompression and BLAKE3 content-addressed reference resolution.
 
 ## Crate Info
 
@@ -17,10 +17,10 @@
 
 ## Purpose and Role in the Protocol
 
-The decoder is the inverse of the encoder and the entry point for the consumption side of the LCP pipeline:
+The decoder is the inverse of the encoder and the entry point for the consumption side of the BCP pipeline:
 
 ```
-.lcp binary ──▶ bcp-decoder ──▶ Vec<Block> ──▶ lcp-driver ──▶ model-ready text ──▶ LLM
+.bcp binary ──▶ bcp-decoder ──▶ Vec<Block> ──▶ bcp-driver ──▶ model-ready text ──▶ LLM
 ```
 
 The decoder handles structural parsing (header validation, frame extraction, TLV field decoding, summary extraction) plus two transparency layers:
@@ -30,7 +30,7 @@ The decoder handles structural parsing (header validation, frame extraction, TLV
 
 Two decode modes serve different use cases:
 
-- **Synchronous** (`LcpDecoder::decode` / `decode_with_store`): For payloads already in memory. Simple, single-pass, returns a `DecodedPayload` with all blocks.
+- **Synchronous** (`BcpDecoder::decode` / `decode_with_store`): For payloads already in memory. Simple, single-pass, returns a `DecodedPayload` with all blocks.
 - **Streaming** (`StreamingDecoder`): For large payloads or network streams. Reads blocks incrementally. Uses `tokio::io::AsyncRead` for async I/O. Proves the RFC's P0 requirement: "The format MUST support streaming / incremental decode without buffering the entire payload."
 
 The decoder is also where the protocol's forward compatibility guarantees are enforced. A v1.0 decoder reading a payload from a v1.1 encoder will:
@@ -45,9 +45,9 @@ The decoder is also where the protocol's forward compatibility guarantees are en
 Stateless unit struct — all state is local to the decode call.
 
 ```rust
-pub struct LcpDecoder;
+pub struct BcpDecoder;
 
-impl LcpDecoder {
+impl BcpDecoder {
     pub fn decode(payload: &[u8]) -> Result<DecodedPayload, DecodeError>;
     pub fn decode_with_store(
         payload: &[u8],
@@ -56,14 +56,14 @@ impl LcpDecoder {
 }
 
 pub struct DecodedPayload {
-    pub header: LcpHeader,
+    pub header: BcpHeader,
     pub blocks: Vec<Block>,
 }
 ```
 
 ### Decode Algorithm
 
-1. **Parse header** (8 bytes): Validates magic (`LCP\0`), version (major must be 1), and reserved byte (must be 0x00).
+1. **Parse header** (8 bytes): Validates magic (`BCP\0`), version (major must be 1), and reserved byte (must be 0x00).
 
 2. **Whole-payload decompression**: If the header's `COMPRESSED` flag (bit 0) is set, decompress all bytes after the header with zstd (max 256 MiB decompressed).
 
@@ -103,10 +103,10 @@ Both `decode()` and `decode_with_store()` are tested against every encoder featu
 
 ```rust
 // Without content addressing
-let decoded = LcpDecoder::decode(&payload)?;
+let decoded = BcpDecoder::decode(&payload)?;
 
 // With content addressing
-let decoded = LcpDecoder::decode_with_store(&payload, store.as_ref())?;
+let decoded = BcpDecoder::decode_with_store(&payload, store.as_ref())?;
 ```
 
 ---
@@ -126,7 +126,7 @@ pub struct StreamingDecoder<R: AsyncRead + Unpin> {
 }
 
 pub enum DecoderEvent {
-    Header(LcpHeader),
+    Header(BcpHeader),
     Block(Block),
 }
 
@@ -210,7 +210,7 @@ Silently skipped via the `_ => {}` match arm. Wire-type-aware skip.
 
 | Stage | Check | Error |
 |-------|-------|-------|
-| Header | Magic = `LCP\0` | `InvalidHeader(InvalidMagic)` |
+| Header | Magic = `BCP\0` | `InvalidHeader(InvalidMagic)` |
 | Header | Major version = 1 | `InvalidHeader(UnsupportedVersion)` |
 | Header | Reserved byte = 0x00 | `InvalidHeader(ReservedNonZero)` |
 | Decompression | Valid zstd frame | `DecompressFailed` |
@@ -250,8 +250,8 @@ pub enum DecodeError {
 
 ```
 src/
-├── lib.rs            → Re-exports LcpDecoder, StreamingDecoder, DecodeError, DecoderEvent
-├── decoder.rs        → LcpDecoder (sync), decode_with_store, DecodedPayload (26 tests)
+├── lib.rs            → Re-exports BcpDecoder, StreamingDecoder, DecodeError, DecoderEvent
+├── decoder.rs        → BcpDecoder (sync), decode_with_store, DecodedPayload (26 tests)
 ├── streaming.rs      → StreamingDecoder state machine (9 async tests)
 ├── block_reader.rs   → BlockReader, RawField TLV deserializer (6 tests)
 ├── decompression.rs  → decompress(), MAX_BLOCK/PAYLOAD_DECOMPRESSED_SIZE (4 tests)

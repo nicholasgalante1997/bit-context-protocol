@@ -3,12 +3,12 @@ use bcp_types::block_type::BlockType;
 use bcp_types::content_store::ContentStore;
 use bcp_types::summary::Summary;
 use bcp_wire::block_frame::BlockFrame;
-use bcp_wire::header::{HEADER_SIZE, LcpHeader};
+use bcp_wire::header::{HEADER_SIZE, BcpHeader};
 
 use crate::decompression::{self, MAX_BLOCK_DECOMPRESSED_SIZE, MAX_PAYLOAD_DECOMPRESSED_SIZE};
 use crate::error::DecodeError;
 
-/// The result of decoding an LCP payload.
+/// The result of decoding a BCP payload.
 ///
 /// Contains the parsed file header and an ordered sequence of typed
 /// blocks. The END sentinel is consumed during decoding and is not
@@ -17,13 +17,13 @@ use crate::error::DecodeError;
 /// ```text
 /// ┌──────────────────────────────────────────────────┐
 /// │ DecodedPayload                                   │
-/// │   header: LcpHeader  ← version, flags            │
+/// │   header: BcpHeader  ← version, flags            │
 /// │   blocks: Vec<Block> ← ordered content blocks    │
 /// └──────────────────────────────────────────────────┘
 /// ```
 pub struct DecodedPayload {
     /// The parsed file header (magic validated, version checked).
-    pub header: LcpHeader,
+    pub header: BcpHeader,
 
     /// Ordered sequence of blocks, excluding the END sentinel.
     ///
@@ -33,12 +33,12 @@ pub struct DecodedPayload {
     pub blocks: Vec<Block>,
 }
 
-/// Synchronous LCP decoder — parses a complete in-memory payload.
+/// Synchronous BCP decoder — parses a complete in-memory payload.
 ///
-/// The decoder reads an entire LCP payload from a byte slice and
+/// The decoder reads an entire BCP payload from a byte slice and
 /// produces a [`DecodedPayload`] containing the header and all typed
 /// blocks. It is the inverse of
-/// `LcpEncoder::encode` from the `bcp-encoder` crate.
+/// `BcpEncoder::encode` from the `bcp-encoder` crate.
 ///
 /// Decoding proceeds in four steps:
 ///
@@ -64,23 +64,23 @@ pub struct DecodedPayload {
 /// # Example
 ///
 /// ```rust
-/// use bcp_encoder::LcpEncoder;
-/// use bcp_decoder::LcpDecoder;
+/// use bcp_encoder::BcpEncoder;
+/// use bcp_decoder::BcpDecoder;
 /// use bcp_types::enums::{Lang, Role};
 ///
-/// let payload = LcpEncoder::new()
+/// let payload = BcpEncoder::new()
 ///     .add_code(Lang::Rust, "main.rs", b"fn main() {}")
 ///     .add_conversation(Role::User, b"hello")
 ///     .encode()
 ///     .unwrap();
 ///
-/// let decoded = LcpDecoder::decode(&payload).unwrap();
+/// let decoded = BcpDecoder::decode(&payload).unwrap();
 /// assert_eq!(decoded.blocks.len(), 2);
 /// ```
-pub struct LcpDecoder;
+pub struct BcpDecoder;
 
-impl LcpDecoder {
-    /// Decode a complete LCP payload from a byte slice.
+impl BcpDecoder {
+    /// Decode a complete BCP payload from a byte slice.
     ///
     /// This is the standard entry point for payloads that do not contain
     /// content-addressed (reference) blocks. If the payload contains
@@ -134,7 +134,7 @@ impl LcpDecoder {
         store: Option<&dyn ContentStore>,
     ) -> Result<DecodedPayload, DecodeError> {
         // 1. Parse the 8-byte header.
-        let header = LcpHeader::read_from(payload).map_err(DecodeError::InvalidHeader)?;
+        let header = BcpHeader::read_from(payload).map_err(DecodeError::InvalidHeader)?;
 
         // 2. Whole-payload decompression.
         let block_data: std::borrow::Cow<'_, [u8]> = if header.flags.is_compressed() {
@@ -275,7 +275,7 @@ impl LcpDecoder {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use bcp_encoder::LcpEncoder;
+    use bcp_encoder::BcpEncoder;
     use bcp_types::diff::DiffHunk;
     use bcp_types::enums::{
         AnnotationKind, DataFormat, FormatHint, Lang, MediaType, Priority, Role, Status,
@@ -285,22 +285,22 @@ mod tests {
 
     // ── Round-trip helpers ────────────────────────────────────────────────
 
-    /// Encode with `LcpEncoder`, decode with `LcpDecoder`, return blocks.
-    fn roundtrip(encoder: &LcpEncoder) -> DecodedPayload {
+    /// Encode with `BcpEncoder`, decode with `BcpDecoder`, return blocks.
+    fn roundtrip(encoder: &BcpEncoder) -> DecodedPayload {
         let payload = encoder.encode().unwrap();
-        LcpDecoder::decode(&payload).unwrap()
+        BcpDecoder::decode(&payload).unwrap()
     }
 
     // ── Acceptance criteria tests ─────────────────────────────────────────
 
     #[test]
     fn decode_parses_encoder_output() {
-        let payload = LcpEncoder::new()
+        let payload = BcpEncoder::new()
             .add_code(Lang::Rust, "main.rs", b"fn main() {}")
             .encode()
             .unwrap();
 
-        let decoded = LcpDecoder::decode(&payload).unwrap();
+        let decoded = BcpDecoder::decode(&payload).unwrap();
         assert_eq!(decoded.blocks.len(), 1);
         assert_eq!(decoded.header.version_major, 1);
         assert_eq!(decoded.header.version_minor, 0);
@@ -309,7 +309,7 @@ mod tests {
     #[test]
     fn roundtrip_single_code_block() {
         let decoded =
-            roundtrip(LcpEncoder::new().add_code(Lang::Rust, "lib.rs", b"pub fn hello() {}"));
+            roundtrip(BcpEncoder::new().add_code(Lang::Rust, "lib.rs", b"pub fn hello() {}"));
 
         assert_eq!(decoded.blocks.len(), 1);
         let block = &decoded.blocks[0];
@@ -330,7 +330,7 @@ mod tests {
     #[test]
     fn roundtrip_multiple_block_types() {
         let decoded = roundtrip(
-            LcpEncoder::new()
+            BcpEncoder::new()
                 .add_code(Lang::Python, "app.py", b"print('hi')")
                 .add_conversation(Role::User, b"What is this?")
                 .add_conversation(Role::Assistant, b"A greeting script.")
@@ -361,7 +361,7 @@ mod tests {
     #[test]
     fn roundtrip_with_summary() {
         let decoded = roundtrip(
-            LcpEncoder::new()
+            BcpEncoder::new()
                 .add_code(Lang::Rust, "main.rs", b"fn main() {}")
                 .with_summary("Application entry point."),
         );
@@ -386,7 +386,7 @@ mod tests {
     #[test]
     fn roundtrip_with_priority_annotation() {
         let decoded = roundtrip(
-            LcpEncoder::new()
+            BcpEncoder::new()
                 .add_code(Lang::Rust, "lib.rs", b"// code")
                 .with_priority(Priority::High),
         );
@@ -409,7 +409,7 @@ mod tests {
     #[test]
     fn roundtrip_all_block_types() {
         let decoded = roundtrip(
-            LcpEncoder::new()
+            BcpEncoder::new()
                 .add_code(Lang::Rust, "main.rs", b"fn main() {}")
                 .add_conversation(Role::User, b"hello")
                 .add_file_tree(
@@ -462,7 +462,7 @@ mod tests {
 
     #[test]
     fn roundtrip_code_with_line_range() {
-        let decoded = roundtrip(LcpEncoder::new().add_code_range(
+        let decoded = roundtrip(BcpEncoder::new().add_code_range(
             Lang::Rust,
             "lib.rs",
             b"fn foo() {}",
@@ -481,7 +481,7 @@ mod tests {
     #[test]
     fn roundtrip_conversation_with_tool_call_id() {
         let decoded =
-            roundtrip(LcpEncoder::new().add_conversation_tool(Role::Tool, b"result", "call_abc"));
+            roundtrip(BcpEncoder::new().add_conversation_tool(Role::Tool, b"result", "call_abc"));
 
         match &decoded.blocks[0].content {
             BlockContent::Conversation(conv) => {
@@ -495,7 +495,7 @@ mod tests {
     fn roundtrip_preserves_all_field_values() {
         // Comprehensive field-level round-trip for complex blocks.
         let decoded = roundtrip(
-            LcpEncoder::new()
+            BcpEncoder::new()
                 .add_file_tree(
                     "/project/src",
                     vec![
@@ -568,46 +568,46 @@ mod tests {
 
     #[test]
     fn rejects_bad_magic() {
-        let mut payload = LcpEncoder::new()
+        let mut payload = BcpEncoder::new()
             .add_conversation(Role::User, b"hi")
             .encode()
             .unwrap();
 
         // Corrupt the magic bytes
         payload[0] = b'X';
-        let result = LcpDecoder::decode(&payload);
+        let result = BcpDecoder::decode(&payload);
         assert!(matches!(result, Err(DecodeError::InvalidHeader(_))));
     }
 
     #[test]
     fn rejects_truncated_header() {
-        let result = LcpDecoder::decode(&[0x4C, 0x43, 0x50, 0x00]);
+        let result = BcpDecoder::decode(&[0x4C, 0x43, 0x50, 0x00]);
         assert!(matches!(result, Err(DecodeError::InvalidHeader(_))));
     }
 
     #[test]
     fn rejects_missing_end_sentinel() {
-        let payload = LcpEncoder::new()
+        let payload = BcpEncoder::new()
             .add_conversation(Role::User, b"hi")
             .encode()
             .unwrap();
 
         // Strip the last 4 bytes (the END sentinel)
         let truncated = &payload[..payload.len() - 4];
-        let result = LcpDecoder::decode(truncated);
+        let result = BcpDecoder::decode(truncated);
         assert!(matches!(result, Err(DecodeError::MissingEndSentinel)));
     }
 
     #[test]
     fn detects_trailing_data() {
-        let mut payload = LcpEncoder::new()
+        let mut payload = BcpEncoder::new()
             .add_conversation(Role::User, b"hi")
             .encode()
             .unwrap();
 
         // Append garbage after the END sentinel
         payload.extend_from_slice(b"trailing garbage");
-        let result = LcpDecoder::decode(&payload);
+        let result = BcpDecoder::decode(&payload);
         assert!(matches!(
             result,
             Err(DecodeError::TrailingData { extra_bytes: 16 })
@@ -621,7 +621,7 @@ mod tests {
         use bcp_wire::header::HeaderFlags;
 
         let mut payload = vec![0u8; HEADER_SIZE];
-        let header = LcpHeader::new(HeaderFlags::NONE);
+        let header = BcpHeader::new(HeaderFlags::NONE);
         header.write_to(&mut payload).unwrap();
 
         // Unknown block frame: type=0x42, flags=0x00, content_len=5, body=b"hello"
@@ -640,7 +640,7 @@ mod tests {
         };
         end.write_to(&mut payload).unwrap();
 
-        let decoded = LcpDecoder::decode(&payload).unwrap();
+        let decoded = BcpDecoder::decode(&payload).unwrap();
         assert_eq!(decoded.blocks.len(), 1);
         assert_eq!(decoded.blocks[0].block_type, BlockType::Unknown(0x42));
 
@@ -656,7 +656,7 @@ mod tests {
     #[test]
     fn optional_fields_absent_result_in_none() {
         let decoded = roundtrip(
-            LcpEncoder::new()
+            BcpEncoder::new()
                 .add_code(Lang::Rust, "x.rs", b"let x = 1;")
                 .add_conversation(Role::User, b"msg"),
         );
@@ -677,7 +677,7 @@ mod tests {
     #[test]
     fn summary_extraction_with_body() {
         let decoded = roundtrip(
-            LcpEncoder::new()
+            BcpEncoder::new()
                 .add_document(
                     "Guide",
                     b"# Getting Started\n\nWelcome!",
@@ -706,7 +706,7 @@ mod tests {
     #[test]
     fn rfc_example_roundtrip() {
         let decoded = roundtrip(
-            LcpEncoder::new()
+            BcpEncoder::new()
                 .add_code(Lang::Rust, "src/main.rs", b"fn main() { todo!() }")
                 .with_summary("Entry point: CLI setup and server startup.")
                 .with_priority(Priority::High)
@@ -738,7 +738,7 @@ mod tests {
     #[test]
     fn empty_body_blocks() {
         // Extension with empty content
-        let decoded = roundtrip(LcpEncoder::new().add_extension("ns", "type", b""));
+        let decoded = roundtrip(BcpEncoder::new().add_extension("ns", "type", b""));
 
         match &decoded.blocks[0].content {
             BlockContent::Extension(ext) => {
@@ -755,7 +755,7 @@ mod tests {
     #[test]
     fn roundtrip_per_block_compression() {
         let big_content = "fn main() { println!(\"hello world\"); }\n".repeat(50);
-        let payload = LcpEncoder::new()
+        let payload = BcpEncoder::new()
             .add_code(Lang::Rust, "main.rs", big_content.as_bytes())
             .with_compression()
             .encode()
@@ -767,7 +767,7 @@ mod tests {
         assert!(frame.flags.is_compressed());
 
         // Decode should transparently decompress
-        let decoded = LcpDecoder::decode(&payload).unwrap();
+        let decoded = BcpDecoder::decode(&payload).unwrap();
         assert_eq!(decoded.blocks.len(), 1);
         match &decoded.blocks[0].content {
             BlockContent::Code(code) => {
@@ -781,14 +781,14 @@ mod tests {
     #[test]
     fn roundtrip_per_block_compression_with_summary() {
         let big_content = "pub fn process() -> Result<(), Error> { Ok(()) }\n".repeat(50);
-        let payload = LcpEncoder::new()
+        let payload = BcpEncoder::new()
             .add_code(Lang::Rust, "lib.rs", big_content.as_bytes())
             .with_summary("Main processing function.")
             .with_compression()
             .encode()
             .unwrap();
 
-        let decoded = LcpDecoder::decode(&payload).unwrap();
+        let decoded = BcpDecoder::decode(&payload).unwrap();
         let block = &decoded.blocks[0];
         assert!(block.flags.has_summary());
         assert!(block.flags.is_compressed());
@@ -807,14 +807,14 @@ mod tests {
     #[test]
     fn roundtrip_whole_payload_compression() {
         let big_content = "use std::io;\n".repeat(100);
-        let payload = LcpEncoder::new()
+        let payload = BcpEncoder::new()
             .add_code(Lang::Rust, "a.rs", big_content.as_bytes())
             .add_code(Lang::Rust, "b.rs", big_content.as_bytes())
             .compress_payload()
             .encode()
             .unwrap();
 
-        let decoded = LcpDecoder::decode(&payload).unwrap();
+        let decoded = BcpDecoder::decode(&payload).unwrap();
         assert_eq!(decoded.blocks.len(), 2);
         assert!(decoded.header.flags.is_compressed());
 
@@ -836,7 +836,7 @@ mod tests {
         use std::sync::Arc;
 
         let store = Arc::new(MemoryContentStore::new());
-        let payload = LcpEncoder::new()
+        let payload = BcpEncoder::new()
             .set_content_store(store.clone())
             .add_code(Lang::Rust, "main.rs", b"fn main() {}")
             .with_content_addressing()
@@ -850,11 +850,11 @@ mod tests {
         assert_eq!(frame.body.len(), 32);
 
         // decode() without store should fail
-        let result = LcpDecoder::decode(&payload);
+        let result = BcpDecoder::decode(&payload);
         assert!(matches!(result, Err(DecodeError::MissingContentStore)));
 
         // decode_with_store should succeed
-        let decoded = LcpDecoder::decode_with_store(&payload, store.as_ref()).unwrap();
+        let decoded = BcpDecoder::decode_with_store(&payload, store.as_ref()).unwrap();
         assert_eq!(decoded.blocks.len(), 1);
         match &decoded.blocks[0].content {
             BlockContent::Code(code) => {
@@ -871,7 +871,7 @@ mod tests {
         use std::sync::Arc;
 
         let store = Arc::new(MemoryContentStore::new());
-        let payload = LcpEncoder::new()
+        let payload = BcpEncoder::new()
             .set_content_store(store.clone())
             .auto_dedup()
             .add_code(Lang::Rust, "main.rs", b"fn main() {}")
@@ -879,7 +879,7 @@ mod tests {
             .encode()
             .unwrap();
 
-        let decoded = LcpDecoder::decode_with_store(&payload, store.as_ref()).unwrap();
+        let decoded = BcpDecoder::decode_with_store(&payload, store.as_ref()).unwrap();
         assert_eq!(decoded.blocks.len(), 2);
 
         // Both should decode to the same content
@@ -899,7 +899,7 @@ mod tests {
         use std::sync::Arc;
 
         let encode_store = Arc::new(MemoryContentStore::new());
-        let payload = LcpEncoder::new()
+        let payload = BcpEncoder::new()
             .set_content_store(encode_store)
             .add_code(Lang::Rust, "main.rs", b"fn main() {}")
             .with_content_addressing()
@@ -908,7 +908,7 @@ mod tests {
 
         // Decode with a fresh (empty) store — hash won't be found
         let decode_store = MemoryContentStore::new();
-        let result = LcpDecoder::decode_with_store(&payload, &decode_store);
+        let result = BcpDecoder::decode_with_store(&payload, &decode_store);
         assert!(matches!(
             result,
             Err(DecodeError::UnresolvedReference { .. })
@@ -924,7 +924,7 @@ mod tests {
 
         let store = Arc::new(MemoryContentStore::new());
         let big_content = "fn process() -> bool { true }\n".repeat(50);
-        let payload = LcpEncoder::new()
+        let payload = BcpEncoder::new()
             .set_content_store(store.clone())
             .compress_payload()
             .add_code(Lang::Rust, "main.rs", big_content.as_bytes())
@@ -933,7 +933,7 @@ mod tests {
             .encode()
             .unwrap();
 
-        let decoded = LcpDecoder::decode_with_store(&payload, store.as_ref()).unwrap();
+        let decoded = BcpDecoder::decode_with_store(&payload, store.as_ref()).unwrap();
         assert_eq!(decoded.blocks.len(), 2);
 
         match &decoded.blocks[0].content {

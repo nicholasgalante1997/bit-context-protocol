@@ -1,5 +1,5 @@
 /// BCP command-line tool — inspect, validate, encode, decode, and analyse
-/// `.lcp` files produced by the Bit Context Protocol stack.
+/// `.bcp` files produced by the Bit Context Protocol stack.
 ///
 /// # Command overview
 ///
@@ -7,10 +7,10 @@
 /// bcp <COMMAND> [OPTIONS]
 ///
 /// Commands:
-///   inspect    Print a human-readable block summary of an LCP file
-///   validate   Check an LCP file for structural correctness
-///   encode     Create an LCP file from a JSON manifest
-///   decode     Render an LCP file as model-ready text
+///   inspect    Print a human-readable block summary of a BCP file
+///   validate   Check a BCP file for structural correctness
+///   encode     Create a BCP file from a JSON manifest
+///   decode     Render a BCP file as model-ready text
 ///   stats      Print size and token-efficiency statistics
 ///   help       Print help information
 ///
@@ -44,7 +44,7 @@ mod cmd_validate;
 
 /// The BCP (Bit Context Protocol) command-line tool.
 ///
-/// Inspect, validate, encode, decode, and analyse `.lcp` binary payloads.
+/// Inspect, validate, encode, decode, and analyse `.bcp` binary payloads.
 #[derive(Parser)]
 #[command(name = "bcp", version, about = "Bit Context Protocol CLI")]
 struct Cli {
@@ -64,13 +64,13 @@ struct Cli {
 
 #[derive(Subcommand)]
 enum Commands {
-    /// Print a human-readable summary of each block in an LCP file.
+    /// Print a human-readable summary of each block in a BCP file.
     Inspect(InspectArgs),
-    /// Check an LCP file for structural correctness.
+    /// Check a BCP file for structural correctness.
     Validate(ValidateArgs),
-    /// Create an LCP file from a JSON manifest.
+    /// Create a BCP file from a JSON manifest.
     Encode(EncodeArgs),
-    /// Render an LCP file as model-ready text.
+    /// Render a BCP file as model-ready text.
     Decode(DecodeArgs),
     /// Print size and token-efficiency statistics.
     Stats(StatsArgs),
@@ -80,7 +80,7 @@ enum Commands {
 
 /// Arguments for `bcp inspect`.
 ///
-/// Reads and decodes an LCP file, then prints a human-readable summary of
+/// Reads and decodes a BCP file, then prints a human-readable summary of
 /// every block (or a single block when `--block` is set). Useful for
 /// quickly understanding what context a payload contains without writing
 /// custom tooling.
@@ -96,7 +96,7 @@ enum Commands {
 /// ```
 #[derive(clap::Args)]
 pub struct InspectArgs {
-    /// Path to the `.lcp` file to inspect.
+    /// Path to the `.bcp` file to inspect.
     pub file: PathBuf,
 
     /// Show block body content (first 80 characters, UTF-8 lossy).
@@ -114,19 +114,19 @@ pub struct InspectArgs {
 
 /// Arguments for `bcp validate`.
 ///
-/// Attempts a full decode of the LCP file and reports either a set of
+/// Attempts a full decode of the BCP file and reports either a set of
 /// success checkmarks or a diagnostic error. The process exits with code 0
 /// on success and code 1 on any structural problem.
 #[derive(clap::Args)]
 pub struct ValidateArgs {
-    /// Path to the `.lcp` file to validate.
+    /// Path to the `.bcp` file to validate.
     pub file: PathBuf,
 }
 
 /// Arguments for `bcp encode`.
 ///
 /// Reads a JSON manifest describing the blocks to encode, then serialises
-/// them into an LCP binary payload. The manifest format is:
+/// them into a BCP binary payload. The manifest format is:
 ///
 /// ```json
 /// {
@@ -156,7 +156,7 @@ pub struct EncodeArgs {
     /// Path to the JSON manifest file describing the blocks to encode.
     pub input: PathBuf,
 
-    /// Output `.lcp` file path.
+    /// Output `.bcp` file path.
     #[arg(short, long)]
     pub output: PathBuf,
 
@@ -175,7 +175,7 @@ pub struct EncodeArgs {
 
 /// Arguments for `bcp decode`.
 ///
-/// Decodes an LCP file and renders the blocks as model-ready text on stdout
+/// Decodes a BCP file and renders the blocks as model-ready text on stdout
 /// (or to a file). The output format, verbosity, token budget, and block
 /// type filter are all configurable.
 ///
@@ -192,7 +192,7 @@ pub struct EncodeArgs {
 /// ```
 #[derive(clap::Args)]
 pub struct DecodeArgs {
-    /// Path to the `.lcp` file to decode.
+    /// Path to the `.bcp` file to decode.
     pub file: PathBuf,
 
     /// Output format: `xml`, `markdown`, or `minimal`.
@@ -226,12 +226,12 @@ pub struct DecodeArgs {
 
 /// Arguments for `bcp stats`.
 ///
-/// Decodes an LCP file and prints size, block-type distribution, compression
+/// Decodes a BCP file and prints size, block-type distribution, compression
 /// ratio (when applicable), and heuristic token estimates for multiple render
 /// modes. Useful for evaluating the token-efficiency impact of a payload.
 #[derive(clap::Args)]
 pub struct StatsArgs {
-    /// Path to the `.lcp` file to analyse.
+    /// Path to the `.bcp` file to analyse.
     pub file: PathBuf,
 }
 

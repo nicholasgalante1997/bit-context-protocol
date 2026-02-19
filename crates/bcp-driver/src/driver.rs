@@ -22,12 +22,12 @@ use crate::render_xml::XmlRenderer;
 /// `DriverConfig`.
 ///
 /// ```text
-/// Vec<Block> ──▶ LcpDriver::render() ──▶ model-ready String
+/// Vec<Block> ──▶ BcpDriver::render() ──▶ model-ready String
 ///                        │
 ///                  DriverConfig
 ///                  (mode, verbosity, token_budget, ...)
 /// ```
-pub trait LcpDriver {
+pub trait BcpDriver {
     /// Render a complete set of decoded blocks into model-ready text.
     ///
     /// # Errors
@@ -64,7 +64,7 @@ pub trait LcpDriver {
 /// ```
 pub struct DefaultDriver;
 
-impl LcpDriver for DefaultDriver {
+impl BcpDriver for DefaultDriver {
     /// Render decoded blocks into model-ready text.
     ///
     /// The rendering pipeline:
