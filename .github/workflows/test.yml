@@ -1,0 +1,46 @@
+name: "[bcp-rs](CI - Test)"
+
+on:
+  push:
+    branches: [main, gh-actions]
+  pull_request:
+    branches: [main]
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  test:
+    name: Run workspace tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: 1.93.0
+
+      - name: Cache Rust dependencies
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: |
+            crates/bcp-wire
+            crates/bcp-types
+            crates/bcp-encoder
+            crates/bcp-decoder
+            crates/bcp-driver
+            crates/bcp-cli
+            crates/bcp-tests
+
+      - name: Run all workspace tests
+        run: cargo test --workspace
+
+      - name: Run tests with coverage (optional)
+        if: false # Enable when cargo-llvm-cov is stable
+        run: |
+          cargo install cargo-llvm-cov --locked
+          cargo llvm-cov --workspace --html

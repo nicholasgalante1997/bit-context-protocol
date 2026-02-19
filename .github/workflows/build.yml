@@ -1,0 +1,84 @@
+name: "[bcp-rs](CI - Build)"
+
+on:
+  push:
+    branches: [main, gh-actions]
+  pull_request:
+    branches: [main]
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  build:
+    name: Build all workspace crates
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: 1.93.0
+
+      - name: Cache Rust dependencies
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: |
+            crates/bcp-wire
+            crates/bcp-types
+            crates/bcp-encoder
+            crates/bcp-decoder
+            crates/bcp-driver
+            crates/bcp-cli
+            crates/bcp-tests
+
+      - name: Check workspace compilation
+        run: cargo check --workspace
+
+      - name: Build all crates (debug)
+        run: cargo build --workspace
+
+      - name: Build CLI binary
+        run: cargo build --package bcp-cli
+
+  build-release:
+    name: Build in release mode
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: 1.93.0
+
+      - name: Cache Rust dependencies
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: |
+            crates/bcp-wire
+            crates/bcp-types
+            crates/bcp-encoder
+            crates/bcp-decoder
+            crates/bcp-driver
+            crates/bcp-cli
+            crates/bcp-tests
+
+      - name: Build all crates (release)
+        run: cargo build --workspace --release
+
+      - name: Build CLI binary (release)
+        run: cargo build --package bcp-cli --release
+
+      - name: Upload release artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: bcp-cli-release
+          path: target/release/bcp
