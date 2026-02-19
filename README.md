@@ -1,40 +1,41 @@
 # Bit Context Protocol
 
-Reference implementation of the **LLM Context Pack (LCP)** binary format — a compact, typed serialization format for structured LLM context. Where traditional approaches waste 30-50% of tokens on markdown fences, JSON envelopes, and repeated path prefixes, LCP packs the same semantic content into a binary representation that can be decoded and rendered into token-efficient text.
+Reference implementation of the **LLM Context Pack (LCP)** binary format — a compact, typed serialization format for structured LLM context. Where traditional approaches waste 30-50% of tokens on markdown fences, JSON envelopes, and repeated path prefixes, LCP packs the same semantic content into a binary representation that decodes into token-efficient text.
 
 Based on [LCP RFC Draft v0.1.0](./RFC.txt) (February 2026).
 
 ## Status
 
-Phase 2 of 4 complete. The wire format, type system, encoder, and decoder are implemented with full round-trip coverage across all 11 block types. Streaming async decode is functional. Forward compatibility (unknown block types, unknown fields, unknown enum values) is enforced.
+**RFC Phase 1 complete.** The wire format, type system, encoder, decoder, driver/renderer, CLI tool, and conformance test suite are all implemented. 305 tests passing across the workspace.
 
 | Crate | Purpose | Status |
 |-------|---------|--------|
-| `bcp-wire` | Varint encoding, file header, block frame envelope | Complete |
-| `bcp-types` | 11 semantic block types, TLV field encoding, shared enums | Complete |
-| `bcp-encoder` | Builder API for producing LCP binary payloads | Complete |
-| `bcp-decoder` | Sync + async streaming decoder with forward compatibility | Complete |
-
-Remaining: driver/renderer (SPEC_05), compression (SPEC_06), content addressing (SPEC_07), token budget engine (SPEC_08), CLI tool (SPEC_09), conformance tests (SPEC_10).
+| `bcp-wire` | Varint encoding, file header, block frame envelope | Complete (44 tests) |
+| `bcp-types` | 11 semantic block types, TLV field encoding, shared enums | Complete (53 tests) |
+| `bcp-encoder` | Builder API with compression, content addressing, dedup | Complete (49 tests) |
+| `bcp-decoder` | Sync + async streaming decoder with forward compatibility | Complete (6 tests) |
+| `bcp-driver` | XML/Markdown/Minimal render modes, token budget engine | Complete (27 tests) |
+| `bcp-cli` | inspect, validate, encode, decode, stats commands | Complete |
+| `bcp-tests` | Golden fixtures, snapshot conformance, roundtrip, benchmarks | Complete (108 tests) |
 
 ## Data Flow
 
 ```
-Tool / Agent ──▶ bcp-encoder ──▶ .lcp binary ──▶ bcp-decoder ──▶ Vec<Block> ──▶ driver ──▶ LLM
+Tool / Agent ──▶ bcp-encoder ──▶ .lcp binary ──▶ bcp-decoder ──▶ Vec<Block> ──▶ bcp-driver ──▶ LLM
 ```
 
 ## Quick Start
 
 ### Prerequisites
 
-- [mise](https://mise.jdx.dev/) (manages Rust toolchain)
+- [mise](https://mise.jdx.dev/) (manages Rust 1.93.0 toolchain)
 
 ### Build & Test
 
 ```bash
 mise install          # Install pinned Rust 1.93.0
 mise run build        # Build all crates
-mise run test         # Run all 141 tests
+mise run test         # Run all 305 tests
 mise run ci           # Full pipeline: fmt check → clippy → test
 ```
 
@@ -64,6 +65,32 @@ for block in &decoded.blocks {
 }
 ```
 
+### Render to Model-Ready Text
+
+```rust
+use bcp_driver::{DefaultDriver, LcpDriver, DriverConfig, OutputMode, Verbosity};
+
+let driver = DefaultDriver;
+let config = DriverConfig {
+    mode: OutputMode::Xml,
+    verbosity: Verbosity::Adaptive,
+    token_budget: Some(8000),
+    ..Default::default()
+};
+let text = driver.render(&decoded.blocks, &config)?;
+```
+
+### CLI
+
+```bash
+bcp inspect payload.lcp               # Block summary table
+bcp validate payload.lcp              # Structural correctness check
+bcp decode payload.lcp --mode xml     # Render as XML-tagged text
+bcp decode payload.lcp --mode minimal # Render as minimal delimiters
+bcp stats payload.lcp                 # Size and token efficiency stats
+bcp encode manifest.json -o out.lcp   # Create .lcp from JSON manifest
+```
+
 ### Streaming Decode
 
 ```rust
@@ -86,7 +113,10 @@ bit-context-protocol/
 │   ├── bcp-wire/       Wire primitives (varint, header, block frame)
 │   ├── bcp-types/      Block type structs, TLV fields, enums
 │   ├── bcp-encoder/    Builder API → binary payload
-│   └── bcp-decoder/    Binary payload → typed structs (sync + async)
+│   ├── bcp-decoder/    Binary payload → typed structs (sync + async)
+│   ├── bcp-driver/     Typed structs → token-efficient text
+│   ├── bcp-cli/        Command-line tool for .lcp files
+│   └── bcp-tests/      Integration tests, golden fixtures, benchmarks
 ├── docs/               Docsify documentation site
 ├── RFC.txt             LCP RFC Draft v0.1.0
 ├── mise.toml           Tool versions + task runner
@@ -108,7 +138,8 @@ mise run fmt            Format all source files
 mise run fmt:check      Check formatting
 mise run check          Fast type-check (no codegen)
 mise run doc            Generate rustdoc
-mise run doc:serve      Serve docsify docs on :3000
+mise run doc:serve      Serve rustdoc on :8080
+mise run docsite:serve  Serve docsify docs on :4040
 mise run ci             Full CI pipeline
 mise run clean          Remove build artifacts
 ```
@@ -118,10 +149,10 @@ mise run clean          Remove build artifacts
 Serve the docs site locally:
 
 ```bash
-mise run doc:serve
+mise run docsite:serve
 ```
 
-Then open `http://localhost:3000`. Covers architecture, spec documentation for SPEC_01 through SPEC_04, per-crate reference pages, block type reference, and error catalog.
+Then open `http://localhost:4040`. Covers architecture, wire format specification, per-crate reference pages, block type reference, error catalog, and test suite documentation.
 
 ## Block Types
 
@@ -132,13 +163,22 @@ Then open `http://localhost:3000`. Covers architecture, spec documentation for S
 | `0x03` | FILE_TREE | Directory structure with nested entries |
 | `0x04` | TOOL_RESULT | Tool/MCP output with status |
 | `0x05` | DOCUMENT | Prose content (markdown/plain/html) |
-| `0x06` | STRUCTURED_DATA | JSON, YAML, TOML, CSV |
+| `0x06` | STRUCTURED_DATA | JSON, YAML, TOML, CSV, XML |
 | `0x07` | DIFF | Code changes with hunks |
 | `0x08` | ANNOTATION | Metadata overlay (priority/summary/tag) |
 | `0x09` | EMBEDDING_REF | Vector store reference |
 | `0x0A` | IMAGE | Image data with alt text |
 | `0xFE` | EXTENSION | User-defined block (namespace + type) |
 | `0xFF` | END | Stream sentinel |
+
+## Features
+
+- **Zstd compression** — per-block or whole-payload, with 256-byte threshold and bomb protection
+- **BLAKE3 content addressing** — deduplicate identical blocks across payloads
+- **Token budget engine** — priority-based degradation (full → summary → placeholder → omit)
+- **Forward compatibility** — unknown block types, fields, and enum values preserved, not rejected
+- **Three render modes** — XML-tagged (Claude-optimized), Markdown (universal), Minimal (max efficiency)
+- **Streaming decode** — async incremental parsing via `StreamingDecoder`
 
 ## License
 

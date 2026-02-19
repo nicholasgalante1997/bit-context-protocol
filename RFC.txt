@@ -20,7 +20,7 @@ Status of This Memo
 Document Information
 
    Version:    0.1.0-draft
-   Status:     Early Draft / Request for Comments
+   Status:     Phase 1 Complete / Reference Implementation Available
    Date:       February 2026
    Author:     Nick Galante <rustycloud42@protonmail.com>,
 			    <c-nicholas.galante@charter.com>
@@ -576,31 +576,51 @@ Table of Contents
 
 9.  Implementation Roadmap
 
-9.1.  Phase 1: Specification and Reference Implementation
+9.1.  Phase 1: Specification and Reference Implementation [COMPLETE]
 
-      o  Finalize the v1 wire format specification with a formal
-         grammar.
+      o  [DONE] Finalize the v1 wire format specification with a
+         formal grammar.  Implemented in the bcp-wire crate (LEB128
+         varints, 8-byte file header, block frame envelope).
 
-      o  Build a reference encoder/decoder in Rust (lcp-core crate).
+      o  [DONE] Build a reference encoder/decoder in Rust.  The
+         workspace comprises seven crates: bcp-wire (wire primitives),
+         bcp-types (11 block types with TLV field encoding),
+         bcp-encoder (builder API with zstd compression and BLAKE3
+         content addressing), bcp-decoder (sync and async streaming
+         decode), bcp-driver (XML/Markdown/Minimal render modes with
+         token budget engine), bcp-cli (inspect/validate/encode/
+         decode/stats), and bcp-tests (integration and conformance).
 
-      o  Build TypeScript bindings (lcp-ts, targeting Bun runtime).
+      o  [DONE] Publish a test suite with golden files for cross-
+         language conformance.  The bcp-tests crate includes 11
+         golden .lcp fixtures with manifests, 27 insta snapshot tests,
+         roundtrip and edge-case suites.  305 tests pass across the
+         workspace.
 
-      o  Publish a test suite with golden files for cross-language
-         conformance.
+      o  [DONE] Benchmark token efficiency against raw markdown for
+         representative context payloads.  Criterion benchmarks in
+         bcp-tests cover encode/decode throughput and token savings
+         measurement.
 
-      o  Benchmark token efficiency against raw markdown for
-         representative context payloads.
+      o  [DEFERRED] Build TypeScript bindings (lcp-ts, targeting Bun
+         runtime).  Deferred to Phase 2.
+
+      Note: The driver, CLI, and token budget engine were originally
+      scoped for Phase 2 but were implemented during Phase 1 to
+      validate the end-to-end pipeline.
 
 9.2.  Phase 2: Driver and Tooling Integration
 
-      o  Implement the driver with XML-tagged, Markdown, and Minimal
-         output modes.
+      o  [DONE] Implement the driver with XML-tagged, Markdown, and
+         Minimal output modes.  (Completed early, during Phase 1.)
+
+      o  [DONE] Build a CLI tool for inspecting, validating, and
+         converting LCP files.  (Completed early, during Phase 1.)
 
       o  Build an MCP server adapter: automatically wraps MCP tool
          results in LCP blocks.
 
-      o  Build a CLI tool for inspecting, validating, and converting
-         LCP files.
+      o  Build TypeScript bindings (lcp-ts, targeting Bun runtime).
 
       o  Develop a VS Code extension for visualizing LCP payloads.
 
