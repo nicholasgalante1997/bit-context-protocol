@@ -1,3 +1,5 @@
 /.docs
 /.vscode
+/models
+/node_modules
 /target
