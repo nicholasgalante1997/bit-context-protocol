@@ -8,6 +8,7 @@ members = [
     "crates/bcp-driver",
     "crates/bcp-cli",
     "crates/bcp-tests",
+    "crates/bcp-bench-real",
 ]
 resolver = "2"  # Always use resolver 2 (default in 2024 edition but explicit is good)
 
@@ -22,3 +23,4 @@ tokio = { version = "1", features = ["full"] }
 bytes = "1"
 insta = "1"
 criterion = { version = "0.8.2", features = ["html_reports"] }
+serde_json = "1"
