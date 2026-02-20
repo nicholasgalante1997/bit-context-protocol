@@ -141,12 +141,18 @@ impl BlockFrame {
         )?;
         cursor += n;
 
-        let block_type = block_type_raw as u8;
-
-        // END sentinel: signal that the stream is done
-        if block_type == block_type::END {
+        // END sentinel: check the full varint value, not just the low byte.
+        // A truncating `as u8` cast would falsely match multi-byte varints
+        // whose low 8 bits happen to be 0xFF (e.g., 16383 → 0xFF).
+        if block_type_raw == u64::from(block_type::END) {
             return Ok(None);
         }
+
+        let block_type = u8::try_from(block_type_raw).map_err(|_| {
+            WireError::InvalidBlockType {
+                raw: block_type_raw,
+            }
+        })?;
 
         // 2. Flags (single byte)
         let flags_byte = *buf

@@ -1,0 +1,12 @@
+# Fuzzing artifacts
+target/
+
+artifacts/
+corpus/
+
+# Cargo lock (regenerated from workspace)
+Cargo.lock
+
+# IDE
+.idea/
+.vscode/
