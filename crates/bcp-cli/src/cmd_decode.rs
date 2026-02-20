@@ -1,6 +1,6 @@
 /// Implementation of `bcp decode`.
 ///
-/// Reads an LCP file, decodes all blocks with `LcpDecoder`, then passes
+/// Reads a BCP file, decodes all blocks with `BcpDecoder`, then passes
 /// the block slice to `DefaultDriver::render` for model-ready text
 /// output. The output is written to stdout or to `-o <file>`.
 ///
@@ -41,28 +41,28 @@ use std::fs;
 use std::io::{self, Write as _};
 
 use anyhow::{Context, Result, anyhow};
-use bcp_decoder::LcpDecoder;
-use bcp_driver::{DefaultDriver, DriverConfig, LcpDriver, OutputMode, Verbosity};
+use bcp_decoder::BcpDecoder;
+use bcp_driver::{DefaultDriver, DriverConfig, BcpDriver, OutputMode, Verbosity};
 use bcp_types::block_type::BlockType;
 
 use crate::DecodeArgs;
 
 /// Run the `bcp decode` command.
 ///
-/// Decodes the LCP file, applies the mode / verbosity / budget / include
+/// Decodes the BCP file, applies the mode / verbosity / budget / include
 /// configuration, renders the blocks via [`DefaultDriver`], and writes the
 /// result to stdout or an output file.
 ///
 /// # Errors
 ///
-/// Returns an error if the file cannot be read, the LCP payload is
+/// Returns an error if the file cannot be read, the BCP payload is
 /// structurally invalid, any CLI flag value is unrecognised, or the
 /// driver fails to render.
 pub fn run(args: &DecodeArgs) -> Result<()> {
     let bytes =
         fs::read(&args.file).with_context(|| format!("cannot read {}", args.file.display()))?;
 
-    let decoded = LcpDecoder::decode(&bytes)
+    let decoded = BcpDecoder::decode(&bytes)
         .with_context(|| format!("failed to decode {}", args.file.display()))?;
 
     let mode = parse_output_mode(&args.mode)?;

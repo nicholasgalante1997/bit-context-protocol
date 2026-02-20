@@ -1,0 +1,72 @@
+# Standalone cargo-fuzz workspace
+# Note: cargo-fuzz requires Rust 2021 (doesn't support 2024 yet)
+[workspace]
+members = ["."]
+
+[package]
+name = "bcp-fuzz"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+# Fuzzing harness
+libfuzzer-sys = "0.4"
+arbitrary = { version = "1", features = ["derive"] }
+
+# Fuzz target dependencies (path deps to workspace crates)
+bcp-types = { path = "../crates/bcp-types" }
+bcp-wire = { path = "../crates/bcp-wire" }
+bcp-decoder = { path = "../crates/bcp-decoder" }
+bcp-encoder = { path = "../crates/bcp-encoder" }
+
+# ── Existing targets: raw byte parsing ──────────────────────────────
+
+[[bin]]
+name = "decode_payload"
+path = "fuzz_targets/decode_payload.rs"
+
+[[bin]]
+name = "decode_body"
+path = "fuzz_targets/decode_body.rs"
+
+[[bin]]
+name = "block_frame"
+path = "fuzz_targets/block_frame.rs"
+
+[[bin]]
+name = "varint"
+path = "fuzz_targets/varint.rs"
+
+# ── New targets: header parsing ─────────────────────────────────────
+
+[[bin]]
+name = "header"
+path = "fuzz_targets/header.rs"
+
+# ── New targets: TLV field parsing ──────────────────────────────────
+
+[[bin]]
+name = "fields"
+path = "fuzz_targets/fields.rs"
+
+# ── New targets: roundtrip (encode→decode) ──────────────────────────
+
+[[bin]]
+name = "varint_roundtrip"
+path = "fuzz_targets/varint_roundtrip.rs"
+
+[[bin]]
+name = "block_frame_roundtrip"
+path = "fuzz_targets/block_frame_roundtrip.rs"
+
+[[bin]]
+name = "header_roundtrip"
+path = "fuzz_targets/header_roundtrip.rs"
+
+[[bin]]
+name = "encode_decode_roundtrip"
+path = "fuzz_targets/encode_decode_roundtrip.rs"
+
+# Required for libfuzzer-sys
+[package.metadata]
+cargo-fuzz = true

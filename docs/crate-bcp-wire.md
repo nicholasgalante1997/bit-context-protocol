@@ -2,7 +2,7 @@
 
 <span class="badge badge-green">Complete</span> <span class="badge badge-blue">Phase 1</span>
 
-> The foundation of the entire LCP protocol. Every byte that enters or exits the system passes through primitives defined in this crate.
+> The foundation of the entire BCP protocol. Every byte that enters or exits the system passes through primitives defined in this crate.
 
 ## Crate Info
 
@@ -17,13 +17,13 @@
 
 ## Purpose and Role in the Protocol
 
-The LCP RFC (Section 4) defines a binary wire format built on three primitives: **varint encoding**, a **file header**, and a **block frame envelope**. `bcp-wire` is the Rust implementation of these primitives. It is the lowest layer of the entire crate stack and has zero internal dependencies beyond `thiserror` for error types.
+The BCP RFC (Section 4) defines a binary wire format built on three primitives: **varint encoding**, a **file header**, and a **block frame envelope**. `bcp-wire` is the Rust implementation of these primitives. It is the lowest layer of the entire crate stack and has zero internal dependencies beyond `thiserror` for error types.
 
 Every other crate in the workspace depends on `bcp-wire`:
 
 - **bcp-types** uses the varint functions and `BlockFlags` to encode/decode TLV field payloads inside block bodies
-- **bcp-encoder** uses `LcpHeader::write_to` and `BlockFrame::write_to` to produce the binary output
-- **bcp-decoder** uses `LcpHeader::read_from` and `BlockFrame::read_from` to parse binary input
+- **bcp-encoder** uses `BcpHeader::write_to` and `BlockFrame::write_to` to produce the binary output
+- **bcp-decoder** uses `BcpHeader::read_from` and `BlockFrame::read_from` to parse binary input
 
 If the wire format is wrong, nothing else works. This is why `bcp-wire` has exhaustive tests covering edge cases (varint overflow, truncated input, boundary values, sequential frame reads) and is the first spec implemented in the project.
 
@@ -31,11 +31,11 @@ If the wire format is wrong, nothing else works. This is why `bcp-wire` has exha
 
 ## Why These Primitives Exist
 
-The LCP format is designed for a fundamentally different target than Protocol Buffers or MessagePack: **maximizing semantic density within a token-constrained context window**. The wire primitives reflect this:
+The BCP format is designed for a fundamentally different target than Protocol Buffers or MessagePack: **maximizing semantic density within a token-constrained context window**. The wire primitives reflect this:
 
 - **Varint encoding (LEB128)** provides compact integer representation. Block type IDs, field IDs, and content lengths are all varints, meaning small values (which are the common case) use only 1 byte. This follows protobuf conventions so the format is familiar to systems programmers, but the use case is novel: these varints tag *semantic context blocks* (code, conversation, file trees) rather than generic message fields.
 
-- **The 8-byte file header** is deliberately fixed-size for fast validation. A receiver can check the magic number (`LCP\0`) and version in a single 8-byte read before committing to parse the rest of the payload. The flags byte enables whole-payload compression and an index trailer, both of which are critical for the token budget engine that decides which blocks to expand vs. summarize.
+- **The 8-byte file header** is deliberately fixed-size for fast validation. A receiver can check the magic number (`BCP\0`) and version in a single 8-byte read before committing to parse the rest of the payload. The flags byte enables whole-payload compression and an index trailer, both of which are critical for the token budget engine that decides which blocks to expand vs. summarize.
 
 - **The block frame envelope** wraps every semantic block with its type tag, per-block flags, and length. This length-prefixed design enables streaming decode — the decoder reads the frame header, knows exactly how many bytes the body occupies, and can process or skip it without buffering the entire payload. The `BlockFlags` bitfield controls per-block features: summary sub-blocks (for budget-aware rendering), per-block zstd compression, and BLAKE3 content-addressed references for deduplication.
 
@@ -80,14 +80,14 @@ pub fn decode_varint(buf: &[u8]) -> Result<(u64, usize), WireError>;
 
 ## File Header
 
-Every LCP payload begins with a fixed 8-byte header. The fixed size means the decoder can validate the payload with a single read before committing to parse blocks.
+Every BCP payload begins with a fixed 8-byte header. The fixed size means the decoder can validate the payload with a single read before committing to parse blocks.
 
 ### Wire Layout
 
 ```
 Offset  Size     Field
 ──────  ───────  ──────────────────────────────────────────────
-0x00    4 bytes  Magic: "LCP\0" (0x4C, 0x43, 0x50, 0x00)
+0x00    4 bytes  Magic: "BCP\0" (0x42, 0x43, 0x50, 0x00)
 0x04    1 byte   Version major (current: 1)
 0x05    1 byte   Version minor (current: 0)
 0x06    1 byte   Flags bitfield
@@ -105,7 +105,7 @@ Offset  Size     Field
 ### API
 
 ```rust
-pub const LCP_MAGIC: [u8; 4] = [0x4C, 0x43, 0x50, 0x00];
+pub const BCP_MAGIC: [u8; 4] = [0x42, 0x43, 0x50, 0x00];
 pub const HEADER_SIZE: usize = 8;
 pub const VERSION_MAJOR: u8 = 1;
 pub const VERSION_MINOR: u8 = 0;
@@ -121,13 +121,13 @@ impl HeaderFlags {
     pub fn has_index(self) -> bool;
 }
 
-pub struct LcpHeader {
+pub struct BcpHeader {
     pub version_major: u8,
     pub version_minor: u8,
     pub flags: HeaderFlags,
 }
 
-impl LcpHeader {
+impl BcpHeader {
     pub fn new(flags: HeaderFlags) -> Self;
     pub fn write_to(&self, buf: &mut [u8]) -> Result<(), WireError>;
     pub fn read_from(buf: &[u8]) -> Result<Self, WireError>;
@@ -139,21 +139,21 @@ impl LcpHeader {
 `read_from` validates in a deliberate sequence that produces the most useful error for each failure mode:
 
 1. **Buffer length** >= 8 → `UnexpectedEof` (not even enough bytes for a header)
-2. **Magic number** matches `LCP\0` → `InvalidMagic` (not an LCP file at all)
-3. **Major version** is 1 → `UnsupportedVersion` (LCP file, but from the future)
-4. **Reserved byte** is 0x00 → `ReservedNonZero` (LCP v1 file, but corrupted or incompatible)
+2. **Magic number** matches `BCP\0` → `InvalidMagic` (not a BCP file at all)
+3. **Major version** is 1 → `UnsupportedVersion` (BCP file, but from the future)
+4. **Reserved byte** is 0x00 → `ReservedNonZero` (BCP v1 file, but corrupted or incompatible)
 
 ### Implementation Notes
 
 - Magic is stored as `[u8; 4]` and compared as raw bytes, not as a `u32`. This sidesteps endianness entirely. The `u32::from_le_bytes` conversion appears only in the error message for developer readability.
 - `HeaderFlags` is a newtype (`struct HeaderFlags(u8)`) with `Copy` semantics. Since it wraps a single byte, copying is trivially cheap and the type provides safety over raw `u8` manipulation.
-- `HeaderFlags` implements `Default` (all bits zero), which `LcpEncoder` uses to construct the standard no-flags header.
+- `HeaderFlags` implements `Default` (all bits zero), which `BcpEncoder` uses to construct the standard no-flags header.
 
 ---
 
 ## Block Frame
 
-The block frame is the envelope wrapping every block's body. After the 8-byte header, an LCP payload is a concatenated sequence of block frames terminated by an END sentinel.
+The block frame is the envelope wrapping every block's body. After the 8-byte header, a BCP payload is a concatenated sequence of block frames terminated by an END sentinel.
 
 ### Wire Layout
 
@@ -272,7 +272,7 @@ All wrapping uses `#[from]` for transparent `?` operator conversion.
 src/
 ├── lib.rs          → #![warn(clippy::pedantic)], pub mod + re-exports
 ├── varint.rs       → encode_varint, decode_varint (14 tests)
-├── header.rs       → LcpHeader, HeaderFlags, constants (8 tests)
+├── header.rs       → BcpHeader, HeaderFlags, constants (8 tests)
 ├── block_frame.rs  → BlockFrame, BlockFlags, block_type module (8 tests)
 └── error.rs        → WireError enum (thiserror derived)
 ```

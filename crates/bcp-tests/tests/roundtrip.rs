@@ -1,7 +1,7 @@
 //! Roundtrip integration tests for the BCP encode → decode → encode pipeline.
 //!
-//! Each test encodes a payload with [`LcpEncoder`], decodes it with
-//! [`LcpDecoder`], then re-encodes the decoded blocks using the
+//! Each test encodes a payload with [`BcpEncoder`], decodes it with
+//! [`BcpDecoder`], then re-encodes the decoded blocks using the
 //! [`encode_from_blocks`] helper and asserts the output is byte-identical
 //! to the original.
 //!
@@ -19,8 +19,8 @@
 //! per-block compression flags are not preserved through a full decode/re-encode
 //! cycle without re-specifying them.
 
-use bcp_decoder::LcpDecoder;
-use bcp_encoder::{EncodeError, LcpEncoder};
+use bcp_decoder::BcpDecoder;
+use bcp_encoder::{EncodeError, BcpEncoder};
 use bcp_types::block::{Block, BlockContent};
 use bcp_types::diff::DiffHunk;
 use bcp_types::enums::{
@@ -30,18 +30,18 @@ use bcp_types::file_tree::{FileEntry, FileEntryKind};
 
 // ── encode_from_blocks helper ────────────────────────────────────────────────
 
-/// Reconstruct an LCP payload from a slice of decoded [`Block`] values.
+/// Reconstruct a BCP payload from a slice of decoded [`Block`] values.
 ///
 /// Iterates the blocks in order, pattern-matches on [`BlockContent`] to
-/// call the appropriate `add_*` method on a fresh [`LcpEncoder`], and
+/// call the appropriate `add_*` method on a fresh [`BcpEncoder`], and
 /// re-attaches any [`Summary`] via `with_summary`. Unknown and End
 /// variants are skipped — they are not re-encoded as semantic content.
 ///
-/// This is the inverse of `LcpDecoder::decode` for known block types,
+/// This is the inverse of `BcpDecoder::decode` for known block types,
 /// and the output is byte-identical to the original encoded payload
 /// provided the same blocks are supplied in the same order.
 pub fn encode_from_blocks(blocks: &[Block]) -> Result<Vec<u8>, EncodeError> {
-    let mut encoder = LcpEncoder::new();
+    let mut encoder = BcpEncoder::new();
 
     for block in blocks {
         match &block.content {
@@ -96,7 +96,7 @@ pub fn encode_from_blocks(blocks: &[Block]) -> Result<Vec<u8>, EncodeError> {
         }
 
         if let Some(summary) = &block.summary {
-            encoder.with_summary(&summary.text);
+            encoder.with_summary(&summary.text).unwrap();
         }
     }
 
@@ -107,12 +107,12 @@ pub fn encode_from_blocks(blocks: &[Block]) -> Result<Vec<u8>, EncodeError> {
 
 #[test]
 fn roundtrip_code_block() {
-    let original = LcpEncoder::new()
+    let original = BcpEncoder::new()
         .add_code(Lang::Rust, "src/main.rs", b"fn main() { println!(\"hello\"); }")
         .encode()
         .unwrap();
 
-    let decoded = LcpDecoder::decode(&original).unwrap();
+    let decoded = BcpDecoder::decode(&original).unwrap();
     let re_encoded = encode_from_blocks(&decoded.blocks).unwrap();
 
     assert_eq!(re_encoded, original);
@@ -120,12 +120,12 @@ fn roundtrip_code_block() {
 
 #[test]
 fn roundtrip_code_range() {
-    let original = LcpEncoder::new()
+    let original = BcpEncoder::new()
         .add_code_range(Lang::Rust, "src/lib.rs", b"pub fn handler() {}", 10, 20)
         .encode()
         .unwrap();
 
-    let decoded = LcpDecoder::decode(&original).unwrap();
+    let decoded = BcpDecoder::decode(&original).unwrap();
     let re_encoded = encode_from_blocks(&decoded.blocks).unwrap();
 
     assert_eq!(re_encoded, original);
@@ -133,7 +133,7 @@ fn roundtrip_code_range() {
 
 #[test]
 fn roundtrip_conversation() {
-    let original = LcpEncoder::new()
+    let original = BcpEncoder::new()
         .add_conversation(Role::User, b"What does this function do?")
         .add_conversation(
             Role::Assistant,
@@ -142,7 +142,7 @@ fn roundtrip_conversation() {
         .encode()
         .unwrap();
 
-    let decoded = LcpDecoder::decode(&original).unwrap();
+    let decoded = BcpDecoder::decode(&original).unwrap();
     let re_encoded = encode_from_blocks(&decoded.blocks).unwrap();
 
     assert_eq!(re_encoded, original);
@@ -150,12 +150,12 @@ fn roundtrip_conversation() {
 
 #[test]
 fn roundtrip_conversation_tool() {
-    let original = LcpEncoder::new()
+    let original = BcpEncoder::new()
         .add_conversation_tool(Role::Tool, b"3 matches found in src/", "call_abc123")
         .encode()
         .unwrap();
 
-    let decoded = LcpDecoder::decode(&original).unwrap();
+    let decoded = BcpDecoder::decode(&original).unwrap();
     let re_encoded = encode_from_blocks(&decoded.blocks).unwrap();
 
     assert_eq!(re_encoded, original);
@@ -183,12 +183,12 @@ fn roundtrip_file_tree() {
         },
     ];
 
-    let original = LcpEncoder::new()
+    let original = BcpEncoder::new()
         .add_file_tree("/project/src", entries)
         .encode()
         .unwrap();
 
-    let decoded = LcpDecoder::decode(&original).unwrap();
+    let decoded = BcpDecoder::decode(&original).unwrap();
     let re_encoded = encode_from_blocks(&decoded.blocks).unwrap();
 
     assert_eq!(re_encoded, original);
@@ -196,12 +196,12 @@ fn roundtrip_file_tree() {
 
 #[test]
 fn roundtrip_tool_result() {
-    let original = LcpEncoder::new()
+    let original = BcpEncoder::new()
         .add_tool_result("cargo test", Status::Ok, b"test result: ok. 5 passed; 0 failed")
         .encode()
         .unwrap();
 
-    let decoded = LcpDecoder::decode(&original).unwrap();
+    let decoded = BcpDecoder::decode(&original).unwrap();
     let re_encoded = encode_from_blocks(&decoded.blocks).unwrap();
 
     assert_eq!(re_encoded, original);
@@ -209,7 +209,7 @@ fn roundtrip_tool_result() {
 
 #[test]
 fn roundtrip_document() {
-    let original = LcpEncoder::new()
+    let original = BcpEncoder::new()
         .add_document(
             "Architecture Overview",
             b"# Architecture\n\nThis system uses a layered approach.",
@@ -218,7 +218,7 @@ fn roundtrip_document() {
         .encode()
         .unwrap();
 
-    let decoded = LcpDecoder::decode(&original).unwrap();
+    let decoded = BcpDecoder::decode(&original).unwrap();
     let re_encoded = encode_from_blocks(&decoded.blocks).unwrap();
 
     assert_eq!(re_encoded, original);
@@ -226,12 +226,12 @@ fn roundtrip_document() {
 
 #[test]
 fn roundtrip_structured_data() {
-    let original = LcpEncoder::new()
+    let original = BcpEncoder::new()
         .add_structured_data(DataFormat::Json, b"{\"name\":\"bcp\",\"version\":1}")
         .encode()
         .unwrap();
 
-    let decoded = LcpDecoder::decode(&original).unwrap();
+    let decoded = BcpDecoder::decode(&original).unwrap();
     let re_encoded = encode_from_blocks(&decoded.blocks).unwrap();
 
     assert_eq!(re_encoded, original);
@@ -245,12 +245,12 @@ fn roundtrip_diff() {
         lines: b"-    old_value: u32,\n+    new_value: u64,\n".to_vec(),
     }];
 
-    let original = LcpEncoder::new()
+    let original = BcpEncoder::new()
         .add_diff("src/types.rs", hunks)
         .encode()
         .unwrap();
 
-    let decoded = LcpDecoder::decode(&original).unwrap();
+    let decoded = BcpDecoder::decode(&original).unwrap();
     let re_encoded = encode_from_blocks(&decoded.blocks).unwrap();
 
     assert_eq!(re_encoded, original);
@@ -258,13 +258,13 @@ fn roundtrip_diff() {
 
 #[test]
 fn roundtrip_annotation() {
-    let original = LcpEncoder::new()
+    let original = BcpEncoder::new()
         .add_code(Lang::Rust, "src/hot_path.rs", b"#[inline(always)] fn compute() -> u64 { 42 }")
         .add_annotation(0, AnnotationKind::Tag, b"hot-path")
         .encode()
         .unwrap();
 
-    let decoded = LcpDecoder::decode(&original).unwrap();
+    let decoded = BcpDecoder::decode(&original).unwrap();
     let re_encoded = encode_from_blocks(&decoded.blocks).unwrap();
 
     assert_eq!(re_encoded, original);
@@ -276,12 +276,12 @@ fn roundtrip_embedding_ref() {
     let source_hash = vec![0xAB; 32];
     let model = "text-embedding-3-small";
 
-    let original = LcpEncoder::new()
+    let original = BcpEncoder::new()
         .add_embedding_ref(vector_id, &source_hash, model)
         .encode()
         .unwrap();
 
-    let decoded = LcpDecoder::decode(&original).unwrap();
+    let decoded = BcpDecoder::decode(&original).unwrap();
     let re_encoded = encode_from_blocks(&decoded.blocks).unwrap();
 
     assert_eq!(re_encoded, original);
@@ -302,12 +302,12 @@ fn roundtrip_image() {
         0x44, 0xAE, 0x42, 0x60, 0x82,
     ];
 
-    let original = LcpEncoder::new()
+    let original = BcpEncoder::new()
         .add_image(MediaType::Png, "Application screenshot", tiny_png)
         .encode()
         .unwrap();
 
-    let decoded = LcpDecoder::decode(&original).unwrap();
+    let decoded = BcpDecoder::decode(&original).unwrap();
     let re_encoded = encode_from_blocks(&decoded.blocks).unwrap();
 
     assert_eq!(re_encoded, original);
@@ -315,12 +315,12 @@ fn roundtrip_image() {
 
 #[test]
 fn roundtrip_extension() {
-    let original = LcpEncoder::new()
+    let original = BcpEncoder::new()
         .add_extension("com.example.tools", "lsp_diagnostic", b"{\"severity\":\"error\"}")
         .encode()
         .unwrap();
 
-    let decoded = LcpDecoder::decode(&original).unwrap();
+    let decoded = BcpDecoder::decode(&original).unwrap();
     let re_encoded = encode_from_blocks(&decoded.blocks).unwrap();
 
     assert_eq!(re_encoded, original);
@@ -330,14 +330,14 @@ fn roundtrip_extension() {
 
 #[test]
 fn roundtrip_block_with_summary() {
-    let original = LcpEncoder::new()
+    let original = BcpEncoder::new()
         .add_code(Lang::Rust, "src/pool.rs", b"pub struct ConnectionPool { max: usize }")
-        .with_summary("Connection pool with configurable max connections.")
+        .with_summary("Connection pool with configurable max connections.").unwrap()
         .add_conversation(Role::User, b"How does the pool handle overflow?")
         .encode()
         .unwrap();
 
-    let decoded = LcpDecoder::decode(&original).unwrap();
+    let decoded = BcpDecoder::decode(&original).unwrap();
     let re_encoded = encode_from_blocks(&decoded.blocks).unwrap();
 
     assert_eq!(re_encoded, original);
@@ -365,21 +365,21 @@ fn roundtrip_compressed_blocks() {
     // COMPRESSED flag is actually set on the wire.
     let long_content = "fn placeholder() -> u64 { 0 }\n".repeat(50);
 
-    let compressed = LcpEncoder::new()
+    let compressed = BcpEncoder::new()
         .add_code(Lang::Rust, "src/generated.rs", long_content.as_bytes())
-        .with_compression()
+        .with_compression().unwrap()
         .add_conversation(Role::User, b"Summarize this module.")
         .encode()
         .unwrap();
 
-    let uncompressed = LcpEncoder::new()
+    let uncompressed = BcpEncoder::new()
         .add_code(Lang::Rust, "src/generated.rs", long_content.as_bytes())
         .add_conversation(Role::User, b"Summarize this module.")
         .encode()
         .unwrap();
 
-    let compressed_decoded = LcpDecoder::decode(&compressed).unwrap();
-    let uncompressed_decoded = LcpDecoder::decode(&uncompressed).unwrap();
+    let compressed_decoded = BcpDecoder::decode(&compressed).unwrap();
+    let uncompressed_decoded = BcpDecoder::decode(&uncompressed).unwrap();
 
     // The decoder transparently decompresses — both payloads decode to the same
     // semantic content. We compare content and summaries only, not wire-layer flags,
@@ -394,21 +394,21 @@ fn roundtrip_compressed_blocks() {
 fn roundtrip_compressed_payload() {
     let long_content = "pub use std::collections::HashMap;\n".repeat(50);
 
-    let compressed = LcpEncoder::new()
+    let compressed = BcpEncoder::new()
         .add_code(Lang::Rust, "src/imports.rs", long_content.as_bytes())
         .add_document("Changelog", b"# Changelog\n\n## v1.0.0\nInitial release.", FormatHint::Markdown)
         .compress_payload()
         .encode()
         .unwrap();
 
-    let uncompressed = LcpEncoder::new()
+    let uncompressed = BcpEncoder::new()
         .add_code(Lang::Rust, "src/imports.rs", long_content.as_bytes())
         .add_document("Changelog", b"# Changelog\n\n## v1.0.0\nInitial release.", FormatHint::Markdown)
         .encode()
         .unwrap();
 
-    let compressed_decoded = LcpDecoder::decode(&compressed).unwrap();
-    let uncompressed_decoded = LcpDecoder::decode(&uncompressed).unwrap();
+    let compressed_decoded = BcpDecoder::decode(&compressed).unwrap();
+    let uncompressed_decoded = BcpDecoder::decode(&uncompressed).unwrap();
 
     // Whole-payload decompression is transparent — decoded block content is
     // semantically identical to the uncompressed equivalent.

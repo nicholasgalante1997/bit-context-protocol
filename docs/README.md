@@ -16,22 +16,22 @@ This is the Rust proof-of-concept implementation (`bit-context-protocol`), organ
 |-------|---------|--------|
 | `bcp-wire` | Wire format primitives (varint, header, block frame) | <span class="badge badge-green">Complete</span> |
 | `bcp-types` | Block type definitions and field encoding | <span class="badge badge-green">Complete</span> |
-| `bcp-encoder` | Builder API for producing LCP payloads | <span class="badge badge-green">Complete</span> |
-| `bcp-decoder` | Sync and streaming decode of LCP payloads | <span class="badge badge-green">Complete</span> |
+| `bcp-encoder` | Builder API for producing BCP payloads | <span class="badge badge-green">Complete</span> |
+| `bcp-decoder` | Sync and streaming decode of BCP payloads | <span class="badge badge-green">Complete</span> |
 | `bcp-driver` | Renderer (blocks to model-ready text, token budget engine) | <span class="badge badge-green">Complete</span> |
 | `bcp-cli` | CLI tool — inspect, validate, encode, decode, stats | <span class="badge badge-green">Complete</span> |
 
 ## Data Flow
 
 ```
-JSON manifest ──▶ bcp encode ──▶ .lcp binary ──▶ bcp decode / bcp inspect / bcp stats
-                  (LcpEncoder)   (wire format)    (LcpDecoder + DefaultDriver)
+JSON manifest ──▶ bcp encode ──▶ .bcp binary ──▶ bcp decode / bcp inspect / bcp stats
+                  (BcpEncoder)   (wire format)    (BcpDecoder + DefaultDriver)
 ```
 
 Full library pipeline:
 
 ```
-Tool / Agent ──▶ LcpEncoder ──▶ .lcp binary ──▶ LcpDecoder ──▶ Driver ──▶ LLM
+Tool / Agent ──▶ BcpEncoder ──▶ .bcp binary ──▶ BcpDecoder ──▶ Driver ──▶ LLM
                  (builder)      (wire format)    (binary→blocks) (blocks→text)
 ```
 
@@ -50,25 +50,25 @@ cargo clippy --workspace -- -W clippy::pedantic
 
 ## CLI
 
-The `bcp` binary provides five subcommands for working with `.lcp` files without writing Rust:
+The `bcp` binary provides five subcommands for working with `.bcp` files without writing Rust:
 
 ```bash
-# Create a .lcp file from a JSON manifest
-bcp encode context.json -o context.lcp
+# Create a .bcp file from a JSON manifest
+bcp encode context.json -o context.bcp
 
 # Check structural validity (exits 0 = valid, 1 = invalid)
-bcp validate context.lcp
+bcp validate context.bcp
 
 # Inspect block layout
-bcp inspect context.lcp --show-body
+bcp inspect context.bcp --show-body
 
 # Render as model-ready text
-bcp decode context.lcp --mode xml
-bcp decode context.lcp --mode markdown --include code,conversation
-bcp decode context.lcp --mode minimal --budget 2000
+bcp decode context.bcp --mode xml
+bcp decode context.bcp --mode markdown --include code,conversation
+bcp decode context.bcp --mode minimal --budget 2000
 
 # Token and size statistics
-bcp stats context.lcp
+bcp stats context.bcp
 ```
 
 See [bcp-cli](crate-bcp-cli.md) for the full manifest format and flag reference.

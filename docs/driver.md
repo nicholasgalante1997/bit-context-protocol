@@ -6,10 +6,10 @@
 
 ## Overview
 
-The driver sits at the end of the LCP pipeline:
+The driver sits at the end of the BCP pipeline:
 
 ```
-.lcp binary ──▶ bcp-decoder ──▶ Vec<Block> ──▶ bcp-driver ──▶ model-ready text ──▶ LLM
+.bcp binary ──▶ bcp-decoder ──▶ Vec<Block> ──▶ bcp-driver ──▶ model-ready text ──▶ LLM
 ```
 
 It is not a simple serializer — it is an **opinionated renderer** that makes decisions about how to present context to maximize model comprehension within a token budget (RFC §5.1). This implementation covers the core rendering path without the token budget engine (deferred to SPEC_08).

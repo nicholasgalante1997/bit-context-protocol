@@ -12,5 +12,5 @@ mod placeholder;
 
 pub use budget::{CodeAwareEstimator, HeuristicEstimator, RenderDecision, TokenEstimator};
 pub use config::{DriverConfig, ModelFamily, OutputMode, Verbosity};
-pub use driver::{DefaultDriver, LcpDriver};
+pub use driver::{DefaultDriver, BcpDriver};
 pub use error::DriverError;

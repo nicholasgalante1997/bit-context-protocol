@@ -12,9 +12,9 @@
 //!   - 200 chars →  50 tokens
 //!   - 400 chars → 100 tokens
 
-use bcp_decoder::LcpDecoder;
-use bcp_driver::{DefaultDriver, DriverConfig, LcpDriver, OutputMode};
-use bcp_encoder::LcpEncoder;
+use bcp_decoder::BcpDecoder;
+use bcp_driver::{DefaultDriver, DriverConfig, BcpDriver, OutputMode};
+use bcp_encoder::BcpEncoder;
 use bcp_types::BlockType;
 use bcp_types::enums::{Lang, Priority, Role};
 
@@ -26,25 +26,25 @@ fn budget_critical_always_included() {
     // normal.rs body:   32 chars → ~8 tokens
     // low.rs body:      32 chars → ~8 tokens
     // Budget of 10 cannot fit any single block fully, yet CRITICAL must appear.
-    let payload = LcpEncoder::new()
+    let payload = BcpEncoder::new()
         .add_code(
             Lang::Rust,
             "critical.rs",
             b"fn critical() { /* CRITICAL_MARKER_XYZ */ }",
         )
-        .with_priority(Priority::Critical)
+        .with_priority(Priority::Critical).unwrap()
         .add_code(Lang::Rust, "normal.rs", b"fn normal() { /* normal */ }")
-        .with_priority(Priority::Normal)
+        .with_priority(Priority::Normal).unwrap()
         .add_code(
             Lang::Rust,
             "low.rs",
             b"fn low_priority() { /* low */ }",
         )
-        .with_priority(Priority::Low)
+        .with_priority(Priority::Low).unwrap()
         .encode()
         .unwrap();
 
-    let decoded = LcpDecoder::decode(&payload).unwrap();
+    let decoded = BcpDecoder::decode(&payload).unwrap();
     let config = DriverConfig {
         mode: OutputMode::Xml,
         token_budget: Some(10),
@@ -77,21 +77,21 @@ fn budget_background_omitted_first() {
     // Note: the driver uses CodeAwareEstimator (not Heuristic). Unindented
     // single-line code estimates at chars/4, same ratio as heuristic for
     // non-indented code, so the approximation holds here.
-    let payload = LcpEncoder::new()
+    let payload = BcpEncoder::new()
         .add_code(Lang::Rust, "normal.rs", b"fn normal_work() { /* NORMAL_MARKER */ }")
-        .with_priority(Priority::Normal)
+        .with_priority(Priority::Normal).unwrap()
         .add_code(Lang::Rust, "low.rs", b"fn low_work() { /* LOW_MARKER_ABC */ }")
-        .with_priority(Priority::Low)
+        .with_priority(Priority::Low).unwrap()
         .add_code(
             Lang::Rust,
             "background.rs",
             b"fn background_work() { /* background_unique_marker */ }",
         )
-        .with_priority(Priority::Background)
+        .with_priority(Priority::Background).unwrap()
         .encode()
         .unwrap();
 
-    let decoded = LcpDecoder::decode(&payload).unwrap();
+    let decoded = BcpDecoder::decode(&payload).unwrap();
     let config = DriverConfig {
         mode: OutputMode::Xml,
         token_budget: Some(22),
@@ -116,21 +116,21 @@ fn budget_background_omitted_first() {
 
 #[test]
 fn budget_no_budget_renders_all() {
-    let payload = LcpEncoder::new()
+    let payload = BcpEncoder::new()
         .add_code(Lang::Rust, "critical.rs", b"fn critical() {}")
-        .with_priority(Priority::Critical)
+        .with_priority(Priority::Critical).unwrap()
         .add_code(Lang::Rust, "high.rs", b"fn high() {}")
-        .with_priority(Priority::High)
+        .with_priority(Priority::High).unwrap()
         .add_code(Lang::Rust, "normal.rs", b"fn normal() {}")
-        .with_priority(Priority::Normal)
+        .with_priority(Priority::Normal).unwrap()
         .add_code(Lang::Rust, "low.rs", b"fn low() {}")
-        .with_priority(Priority::Low)
+        .with_priority(Priority::Low).unwrap()
         .add_code(Lang::Rust, "background.rs", b"fn background() {}")
-        .with_priority(Priority::Background)
+        .with_priority(Priority::Background).unwrap()
         .encode()
         .unwrap();
 
-    let decoded = LcpDecoder::decode(&payload).unwrap();
+    let decoded = BcpDecoder::decode(&payload).unwrap();
     // Default config has no token_budget and Adaptive verbosity → render all full.
     let config = DriverConfig::default();
     let output = DefaultDriver.render(&decoded.blocks, &config).unwrap();
@@ -153,14 +153,14 @@ fn budget_summary_used_under_pressure() {
     // HIGH always gets at least something (Full → Summary → Full forced).
     let long_content = b"// Long content that would consume many tokens. ".repeat(10);
 
-    let payload = LcpEncoder::new()
+    let payload = BcpEncoder::new()
         .add_code(Lang::Rust, "high.rs", &long_content)
-        .with_summary("Short summary of high priority block.")
-        .with_priority(Priority::High)
+        .with_summary("Short summary of high priority block.").unwrap()
+        .with_priority(Priority::High).unwrap()
         .encode()
         .unwrap();
 
-    let decoded = LcpDecoder::decode(&payload).unwrap();
+    let decoded = BcpDecoder::decode(&payload).unwrap();
     let config = DriverConfig {
         mode: OutputMode::Xml,
         token_budget: Some(20),
@@ -181,14 +181,14 @@ fn budget_type_filter_independent_of_budget() {
     // Encode: Rust CODE, User conversation, Python CODE.
     // Filter to Code only. The conversation should be absent regardless of budget.
     // With a tight budget, at least one code block should still render.
-    let payload = LcpEncoder::new()
+    let payload = BcpEncoder::new()
         .add_code(Lang::Rust, "rust_code.rs", b"fn rust_entry() { /* RUST_MARKER */ }")
         .add_conversation(Role::User, b"This conversation should be absent from filtered output.")
         .add_code(Lang::Python, "python_code.py", b"def python_entry(): pass  # PYTHON_MARKER")
         .encode()
         .unwrap();
 
-    let decoded = LcpDecoder::decode(&payload).unwrap();
+    let decoded = BcpDecoder::decode(&payload).unwrap();
     let config = DriverConfig {
         mode: OutputMode::Minimal,
         include_types: Some(vec![BlockType::Code]),
@@ -223,21 +223,21 @@ fn budget_priority_ordering_verified() {
     let body_low = b"fn low_path() { /* LOWCONTENT_DDD */ let x = 0; let y = 0; x + y + 0 + 0 }";
     let body_bg = b"fn background_path() { /* BGCONTENT_EEE */ let x = 0; let y = 0; x + y }";
 
-    let payload = LcpEncoder::new()
+    let payload = BcpEncoder::new()
         .add_code(Lang::Rust, "critical.rs", body_critical)
-        .with_priority(Priority::Critical)
+        .with_priority(Priority::Critical).unwrap()
         .add_code(Lang::Rust, "high.rs", body_high)
-        .with_priority(Priority::High)
+        .with_priority(Priority::High).unwrap()
         .add_code(Lang::Rust, "normal.rs", body_normal)
-        .with_priority(Priority::Normal)
+        .with_priority(Priority::Normal).unwrap()
         .add_code(Lang::Rust, "low.rs", body_low)
-        .with_priority(Priority::Low)
+        .with_priority(Priority::Low).unwrap()
         .add_code(Lang::Rust, "background.rs", body_bg)
-        .with_priority(Priority::Background)
+        .with_priority(Priority::Background).unwrap()
         .encode()
         .unwrap();
 
-    let decoded = LcpDecoder::decode(&payload).unwrap();
+    let decoded = BcpDecoder::decode(&payload).unwrap();
     let config = DriverConfig {
         mode: OutputMode::Minimal,
         token_budget: Some(110),

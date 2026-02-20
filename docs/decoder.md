@@ -2,7 +2,7 @@
 
 <span class="badge badge-green">SPEC_04</span> <span class="badge badge-mauve">bcp-decoder</span>
 
-> Reads binary LCP payloads and produces typed `Block` structs. Provides both synchronous (buffered) and asynchronous (streaming) APIs. Validates structural integrity while remaining permissive with unknown block types.
+> Reads binary BCP payloads and produces typed `Block` structs. Provides both synchronous (buffered) and asynchronous (streaming) APIs. Validates structural integrity while remaining permissive with unknown block types.
 
 ## Overview
 
@@ -10,8 +10,8 @@
 crates/bcp-decoder/
 ├── Cargo.toml
 └── src/
-    ├── lib.rs            # Crate root: pub use LcpDecoder, StreamingDecoder
-    ├── decoder.rs        # LcpDecoder (synchronous)
+    ├── lib.rs            # Crate root: pub use BcpDecoder, StreamingDecoder
+    ├── decoder.rs        # BcpDecoder (synchronous)
     ├── streaming.rs      # StreamingDecoder (async, tokio)
     ├── block_reader.rs   # BlockReader TLV field deserializer
     ├── decompression.rs  # Zstd decompression (Phase 3 stub)
@@ -28,14 +28,14 @@ crates/bcp-decoder/
 Parses a complete in-memory payload. Stateless unit struct.
 
 ```rust
-pub struct LcpDecoder;
+pub struct BcpDecoder;
 
-impl LcpDecoder {
+impl BcpDecoder {
     pub fn decode(payload: &[u8]) -> Result<DecodedPayload, DecodeError>;
 }
 
 pub struct DecodedPayload {
-    pub header: LcpHeader,
+    pub header: BcpHeader,
     pub blocks: Vec<Block>,  // END sentinel consumed, not included
 }
 ```
@@ -59,6 +59,8 @@ pub struct DecodedPayload {
 
 Async decoder that yields blocks one at a time without buffering the entire payload. Uses a state machine internally.
 
+> **Caveat**: Whole-payload compression (`HeaderFlags::COMPRESSED`) forces the streaming decoder to buffer everything before yielding blocks. True streaming only works with uncompressed or per-block compressed payloads. See [crate-bcp-decoder](crate-bcp-decoder.md#whole-payload-compression-disables-streaming) for the full tradeoff table.
+
 ```rust
 pub struct StreamingDecoder<R: AsyncRead + Unpin> { /* ... */ }
 
@@ -68,7 +70,7 @@ impl<R: AsyncRead + Unpin> StreamingDecoder<R> {
 }
 
 pub enum DecoderEvent {
-    Header(LcpHeader),  // Emitted once, first
+    Header(BcpHeader),  // Emitted once, first
     Block(Block),        // Emitted per block
 }
 ```
@@ -144,7 +146,7 @@ Three layers of tolerance enable schema evolution:
 
 | Check | Stage | Error |
 |-------|-------|-------|
-| Magic number `LCP\0` | Header | `InvalidHeader(InvalidMagic)` |
+| Magic number `BCP\0` | Header | `InvalidHeader(InvalidMagic)` |
 | Version major = 1 | Header | `InvalidHeader(UnsupportedVersion)` |
 | Reserved byte = 0x00 | Header | `InvalidHeader(ReservedNonZero)` |
 | Body length within payload | Frame | `Wire(UnexpectedEof)` |

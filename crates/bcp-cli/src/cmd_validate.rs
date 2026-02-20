@@ -1,6 +1,6 @@
 /// Implementation of `bcp validate`.
 ///
-/// Attempts a full structural decode of the LCP file and reports either a
+/// Attempts a full structural decode of the BCP file and reports either a
 /// series of success checkmarks (`✓`) or a diagnostic failure line (`✗`).
 /// The command exits with code 0 on a valid file and code 1 on any error
 /// (the main dispatcher in `main.rs` converts `Err` to exit code 1).
@@ -8,7 +8,7 @@
 /// # Success output
 ///
 /// ```text
-/// ✓ Header: valid (LCP v1.0)
+/// ✓ Header: valid (BCP v1.0)
 /// ✓ Blocks: 4 blocks parsed successfully
 /// ✓ Sentinel: END block present
 /// ✓ Integrity: all block bodies parse without error
@@ -17,12 +17,12 @@
 /// # Failure output
 ///
 /// ```text
-/// ✗ Error: invalid header — invalid magic number: expected 0x4C435000, got 0xDEADBEEF
+/// ✗ Error: invalid header — invalid magic number: expected 0x42435000, got 0xDEADBEEF
 /// ```
 ///
 /// # Validation steps
 ///
-/// The validate command runs a single `LcpDecoder::decode` call, which
+/// The validate command runs a single `BcpDecoder::decode` call, which
 /// covers all four structural layers defined in RFC §4:
 ///
 /// ```text
@@ -38,7 +38,7 @@
 use std::fs;
 
 use anyhow::{Context, Result, anyhow};
-use bcp_decoder::{DecodeError, LcpDecoder};
+use bcp_decoder::{DecodeError, BcpDecoder};
 
 use crate::ValidateArgs;
 
@@ -50,17 +50,17 @@ use crate::ValidateArgs;
 ///
 /// # Errors
 ///
-/// Returns an error if the file cannot be read, or if the LCP payload
+/// Returns an error if the file cannot be read, or if the BCP payload
 /// fails any structural validation check.
 pub fn run(args: &ValidateArgs) -> Result<()> {
     let bytes =
         fs::read(&args.file).with_context(|| format!("cannot read {}", args.file.display()))?;
 
-    match LcpDecoder::decode(&bytes) {
+    match BcpDecoder::decode(&bytes) {
         Ok(decoded) => {
             let header = &decoded.header;
             println!(
-                "✓ Header: valid (LCP v{}.{})",
+                "✓ Header: valid (BCP v{}.{})",
                 header.version_major, header.version_minor
             );
             println!(

@@ -2,7 +2,7 @@
 
 <span class="badge badge-green">SPEC_03</span> <span class="badge badge-mauve">bcp-encoder</span>
 
-> Builder-pattern API for constructing LCP binary payloads. Tools, agents, and MCP servers use this to produce `.lcp` files.
+> Builder-pattern API for constructing BCP binary payloads. Tools, agents, and MCP servers use this to produce `.bcp` files.
 
 ## Overview
 
@@ -10,8 +10,8 @@
 crates/bcp-encoder/
 ├── Cargo.toml
 └── src/
-    ├── lib.rs            # Crate root: pub use LcpEncoder, EncodeError
-    ├── encoder.rs        # LcpEncoder builder struct
+    ├── lib.rs            # Crate root: pub use BcpEncoder, EncodeError
+    ├── encoder.rs        # BcpEncoder builder struct
     ├── block_writer.rs   # BlockWriter TLV field serializer
     ├── compression.rs    # Zstd compression (Phase 3 stub)
     ├── content_store.rs  # BLAKE3 content store (Phase 3 stub)
@@ -25,10 +25,10 @@ crates/bcp-encoder/
 ## Usage
 
 ```rust
-use bcp_encoder::LcpEncoder;
+use bcp_encoder::BcpEncoder;
 use bcp_types::{Lang, Role, Status, Priority};
 
-let payload = LcpEncoder::new()
+let payload = BcpEncoder::new()
     .add_code(Lang::Rust, "src/main.rs", content.as_bytes())
     .with_summary("Entry point: CLI setup and server startup.")
     .with_priority(Priority::High)
@@ -40,7 +40,7 @@ let payload = LcpEncoder::new()
 
 ---
 
-## LcpEncoder
+## BcpEncoder
 
 ### Constructor
 
@@ -64,6 +64,7 @@ All return `&mut Self` for chaining. Each appends a block to the internal list.
 | `add_structured_data` | STRUCTURED_DATA | `format`, `content` |
 | `add_diff` | DIFF | `path`, `hunks: Vec<DiffHunk>` |
 | `add_annotation` | ANNOTATION | `target_block_id`, `kind`, `value` |
+| `add_embedding_ref` | EMBEDDING_REF | `vector_id`, `source_hash`, `model` |
 | `add_image` | IMAGE | `media_type`, `alt_text`, `data` |
 | `add_extension` | EXTENSION | `namespace`, `type_name`, `content` |
 
@@ -100,7 +101,7 @@ pub fn encode(&self) -> Result<Vec<u8>, EncodeError>;
 
 **Serialization flow**:
 1. Validate block list is non-empty
-2. Write 8-byte LCP header
+2. Write 8-byte BCP header
 3. For each block: serialize body via `BlockContent::encode_body()`, prepend summary if set, wrap in `BlockFrame`, write to output
 4. Validate body size <= 16 MiB per block
 5. Write END sentinel
@@ -140,7 +141,9 @@ impl BlockWriter {
 pub enum EncodeError {
     EmptyPayload,                              // No blocks added
     BlockTooLarge { size: usize, limit: usize }, // Body > 16 MiB
-    InvalidSummaryTarget,                      // Defined but unused (panics used instead)
+    NoBlockTarget { method: &'static str },    // Modifier called with no preceding block
+    MissingContentStore,                       // Content addressing without a store
+    Compression(CompressionError),             // From zstd
     Wire(WireError),                           // From bcp-wire
     Io(std::io::Error),                        // I/O failure
 }

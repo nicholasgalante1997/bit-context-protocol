@@ -1,22 +1,22 @@
-use bcp_decoder::LcpDecoder;
-use bcp_encoder::LcpEncoder;
+use bcp_decoder::BcpDecoder;
+use bcp_encoder::BcpEncoder;
 use bcp_types::enums::{Lang, Role, Status};
 use criterion::{BenchmarkId, Criterion, Throughput, criterion_group, criterion_main};
 
 fn bench_decode_small(c: &mut Criterion) {
-    let payload = LcpEncoder::new()
+    let payload = BcpEncoder::new()
         .add_code(Lang::Rust, "src/main.rs", b"fn main() {}")
         .encode()
         .unwrap();
 
     c.bench_function("decode_small", |b| {
-        b.iter(|| LcpDecoder::decode(&payload).unwrap());
+        b.iter(|| BcpDecoder::decode(&payload).unwrap());
     });
 }
 
 fn bench_decode_medium(c: &mut Criterion) {
     let content = b"fn placeholder() {}\n".repeat(50);
-    let payload = LcpEncoder::new()
+    let payload = BcpEncoder::new()
         .add_code(Lang::Rust, "a.rs", &content)
         .add_code(Lang::TypeScript, "b.ts", &content)
         .add_conversation(Role::User, b"Review this code.")
@@ -25,28 +25,28 @@ fn bench_decode_medium(c: &mut Criterion) {
         .unwrap();
 
     c.bench_function("decode_medium", |b| {
-        b.iter(|| LcpDecoder::decode(&payload).unwrap());
+        b.iter(|| BcpDecoder::decode(&payload).unwrap());
     });
 }
 
 fn bench_decode_compressed(c: &mut Criterion) {
     let content = b"fn placeholder() {}\n".repeat(50);
 
-    let uncompressed = LcpEncoder::new()
+    let uncompressed = BcpEncoder::new()
         .add_code(Lang::Rust, "a.rs", &content)
         .add_code(Lang::Rust, "b.rs", &content)
         .encode()
         .unwrap();
 
-    let per_block = LcpEncoder::new()
+    let per_block = BcpEncoder::new()
         .add_code(Lang::Rust, "a.rs", &content)
-        .with_compression()
+        .with_compression().unwrap()
         .add_code(Lang::Rust, "b.rs", &content)
-        .with_compression()
+        .with_compression().unwrap()
         .encode()
         .unwrap();
 
-    let whole_payload = LcpEncoder::new()
+    let whole_payload = BcpEncoder::new()
         .add_code(Lang::Rust, "a.rs", &content)
         .add_code(Lang::Rust, "b.rs", &content)
         .compress_payload()
@@ -56,13 +56,13 @@ fn bench_decode_compressed(c: &mut Criterion) {
     let mut group = c.benchmark_group("decode_compression");
 
     group.bench_function("uncompressed", |b| {
-        b.iter(|| LcpDecoder::decode(&uncompressed).unwrap());
+        b.iter(|| BcpDecoder::decode(&uncompressed).unwrap());
     });
     group.bench_function("per_block", |b| {
-        b.iter(|| LcpDecoder::decode(&per_block).unwrap());
+        b.iter(|| BcpDecoder::decode(&per_block).unwrap());
     });
     group.bench_function("whole_payload", |b| {
-        b.iter(|| LcpDecoder::decode(&whole_payload).unwrap());
+        b.iter(|| BcpDecoder::decode(&whole_payload).unwrap());
     });
 
     group.finish();
@@ -73,7 +73,7 @@ fn bench_decode_throughput(c: &mut Criterion) {
 
     for size_kb in [1, 10, 100] {
         let content = vec![b'x'; size_kb * 1024];
-        let payload = LcpEncoder::new()
+        let payload = BcpEncoder::new()
             .add_code(Lang::Rust, "large.rs", &content)
             .encode()
             .unwrap();
@@ -82,7 +82,7 @@ fn bench_decode_throughput(c: &mut Criterion) {
         group.bench_with_input(
             BenchmarkId::new("decode", format!("{size_kb}kb")),
             &payload,
-            |b, p| b.iter(|| LcpDecoder::decode(p).unwrap()),
+            |b, p| b.iter(|| BcpDecoder::decode(p).unwrap()),
         );
     }
 

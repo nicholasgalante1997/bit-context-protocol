@@ -5,7 +5,7 @@ expression: output
 <context>
 <code lang="rust" path="src/main.rs">
 fn main() {
-    println!("Hello, LCP!");
+    println!("Hello, BCP!");
 }
 </code>
 </context>

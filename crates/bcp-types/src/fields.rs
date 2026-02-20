@@ -170,11 +170,21 @@ pub fn decode_varint_value(buf: &[u8]) -> Result<(u64, usize), TypeError> {
 /// where `bytes_consumed` includes the length prefix varint.
 pub fn decode_bytes_value(buf: &[u8]) -> Result<(&[u8], usize), TypeError> {
     let (len, n) = decode_varint(buf)?;
-    let len = len as usize;
+    // Convert u64 to usize, rejecting values that don't fit
+    let len = usize::try_from(len).map_err(|_| {
+        WireError::UnexpectedEof { offset: n }
+    })?;
+    // Check for overflow before computing the end
+    let end = match n.checked_add(len) {
+        Some(e) => e,
+        None => {
+            return Err(WireError::UnexpectedEof { offset: n }.into())
+        }
+    };
     let data = buf
-        .get(n..n + len)
+        .get(n..end)
         .ok_or(WireError::UnexpectedEof { offset: n })?;
-    Ok((data, n + len))
+    Ok((data, end))
 }
 
 /// Skip a field's payload based on its wire type.

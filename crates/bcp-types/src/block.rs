@@ -15,11 +15,11 @@ use crate::structured_data::StructuredDataBlock;
 use crate::summary::Summary;
 use crate::tool_result::ToolResultBlock;
 
-/// A fully parsed LCP block — the union of all block types with
+/// A fully parsed BCP block — the union of all block types with
 /// optional metadata.
 ///
-/// This is the primary type that higher-level crates (`lcp-encoder`,
-/// `lcp-decoder`, `lcp-driver`) work with. It combines the block's
+/// This is the primary type that higher-level crates (`bcp-encoder`,
+/// `bcp-decoder`, `bcp-driver`) work with. It combines the block's
 /// type tag, per-block flags, optional summary, and typed content
 /// into a single value.
 ///

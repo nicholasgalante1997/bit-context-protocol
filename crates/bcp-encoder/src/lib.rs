@@ -7,5 +7,5 @@ pub mod encoder;
 pub mod error;
 
 pub use content_store::MemoryContentStore;
-pub use encoder::LcpEncoder;
+pub use encoder::BcpEncoder;
 pub use error::{CompressionError, EncodeError};

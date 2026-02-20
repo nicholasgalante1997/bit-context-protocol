@@ -2,7 +2,7 @@
 
 <span class="badge badge-green">Complete</span> <span class="badge badge-blue">Phase 1</span>
 
-> The semantic vocabulary of LCP. Defines what kinds of context exist, how they are structured, and how their fields are serialized to and from bytes.
+> The semantic vocabulary of BCP. Defines what kinds of context exist, how they are structured, and how their fields are serialized to and from bytes.
 
 ## Crate Info
 
@@ -17,7 +17,7 @@
 
 ## Purpose and Role in the Protocol
 
-The core insight of LCP is that LLM context is not unstructured text — it has semantic types. A code file is not the same as a conversation turn, which is not the same as a tool result. The RFC (Section 4.4) defines 11 semantic block types that capture the kinds of context an LLM actually consumes:
+The core insight of BCP is that LLM context is not unstructured text — it has semantic types. A code file is not the same as a conversation turn, which is not the same as a tool result. The RFC (Section 4.4) defines 11 semantic block types that capture the kinds of context an LLM actually consumes:
 
 - **Code**: source files with language and path metadata
 - **Conversation**: chat turns with role information
@@ -53,7 +53,7 @@ There are three wire types:
 | **Bytes** | 1 | Varint length + raw bytes | Strings, binary content, opaque data |
 | **Nested** | 2 | Varint length + nested TLV | Repeated structs (FileEntry, DiffHunk) |
 
-This design is deliberately protobuf-like for familiarity, but it serves a different purpose. In protobuf, TLV enables schema evolution for RPC messages. In LCP, it enables **forward compatibility for context blocks** — a newer encoder can add fields that an older decoder will skip without error, which is essential for a protocol that will evolve as LLM capabilities change.
+This design is deliberately protobuf-like for familiarity, but it serves a different purpose. In protobuf, TLV enables schema evolution for RPC messages. In BCP, it enables **forward compatibility for context blocks** — a newer encoder can add fields that an older decoder will skip without error, which is essential for a protocol that will evolve as LLM capabilities change.
 
 ### Forward Compatibility via Field Skipping
 

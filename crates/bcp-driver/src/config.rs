@@ -1,6 +1,6 @@
 use bcp_types::BlockType;
 
-/// Configuration for the LCP driver.
+/// Configuration for the BCP driver.
 ///
 /// Controls how decoded blocks are rendered into model-ready text.
 /// The driver uses these settings to select the output format, apply

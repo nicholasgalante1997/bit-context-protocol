@@ -21,8 +21,8 @@
 
 use std::path::Path;
 
-use bcp_decoder::{DecodeError, LcpDecoder};
-use bcp_encoder::LcpEncoder;
+use bcp_decoder::{DecodeError, BcpDecoder};
+use bcp_encoder::BcpEncoder;
 use bcp_types::BlockContent;
 use bcp_types::enums::Lang;
 
@@ -37,8 +37,8 @@ fn golden(subpath: &str) -> Vec<u8> {
 
 #[test]
 fn unknown_block_type_preserved() {
-    let bytes = golden("edge_cases/unknown_block_type/payload.lcp");
-    let decoded = LcpDecoder::decode(&bytes).expect("decode should succeed for unknown block type");
+    let bytes = golden("edge_cases/unknown_block_type/payload.bcp");
+    let decoded = BcpDecoder::decode(&bytes).expect("decode should succeed for unknown block type");
 
     let has_unknown = decoded.blocks.iter().any(|b| {
         matches!(b.content, BlockContent::Unknown { type_id: 0x42, .. })
@@ -53,8 +53,8 @@ fn unknown_block_type_preserved() {
 
 #[test]
 fn unknown_block_type_reencodes_identical() {
-    let bytes = golden("edge_cases/unknown_block_type/payload.lcp");
-    let decoded = LcpDecoder::decode(&bytes).expect("decode should succeed");
+    let bytes = golden("edge_cases/unknown_block_type/payload.bcp");
+    let decoded = BcpDecoder::decode(&bytes).expect("decode should succeed");
 
     assert_eq!(
         decoded.blocks[0].content,
@@ -70,12 +70,12 @@ fn unknown_block_type_reencodes_identical() {
 
 #[test]
 fn empty_content_valid() {
-    let payload = LcpEncoder::new()
+    let payload = BcpEncoder::new()
         .add_code(Lang::Rust, "empty.rs", b"")
         .encode()
         .expect("encoding an empty CODE block should succeed");
 
-    let decoded = LcpDecoder::decode(&payload).expect("decoding an empty CODE block should succeed");
+    let decoded = BcpDecoder::decode(&payload).expect("decoding an empty CODE block should succeed");
 
     assert_eq!(decoded.blocks.len(), 1);
 
@@ -92,8 +92,8 @@ fn empty_content_valid() {
 
 #[test]
 fn empty_content_golden() {
-    let bytes = golden("edge_cases/empty_content/payload.lcp");
-    let decoded = LcpDecoder::decode(&bytes).expect("golden empty_content payload should decode");
+    let bytes = golden("edge_cases/empty_content/payload.bcp");
+    let decoded = BcpDecoder::decode(&bytes).expect("golden empty_content payload should decode");
 
     assert_eq!(
         decoded.blocks.len(),
@@ -117,8 +117,8 @@ fn empty_content_golden() {
 
 #[test]
 fn large_varint_roundtrip() {
-    let bytes = golden("edge_cases/large_varint/payload.lcp");
-    let decoded = LcpDecoder::decode(&bytes).expect("16 KiB payload should decode without error");
+    let bytes = golden("edge_cases/large_varint/payload.bcp");
+    let decoded = BcpDecoder::decode(&bytes).expect("16 KiB payload should decode without error");
 
     assert_eq!(
         decoded.blocks.len(),
@@ -148,8 +148,8 @@ fn large_varint_roundtrip() {
 
 #[test]
 fn trailing_data_warning() {
-    let bytes = golden("edge_cases/trailing_data/payload.lcp");
-    let result = LcpDecoder::decode(&bytes);
+    let bytes = golden("edge_cases/trailing_data/payload.bcp");
+    let result = BcpDecoder::decode(&bytes);
 
     assert!(
         result.is_ok()

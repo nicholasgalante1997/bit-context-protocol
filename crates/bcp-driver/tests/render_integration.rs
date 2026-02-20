@@ -4,9 +4,9 @@
 //! produces a binary payload, the decoder extracts typed blocks, and the
 //! driver renders them into model-ready text in all three output modes.
 
-use bcp_decoder::LcpDecoder;
-use bcp_driver::{DefaultDriver, DriverConfig, LcpDriver, OutputMode, Verbosity};
-use bcp_encoder::LcpEncoder;
+use bcp_decoder::BcpDecoder;
+use bcp_driver::{DefaultDriver, DriverConfig, BcpDriver, OutputMode, Verbosity};
+use bcp_encoder::BcpEncoder;
 use bcp_types::enums::{Lang, Priority, Role, Status};
 
 /// Build a representative payload with multiple block types, encode it,
@@ -16,13 +16,13 @@ use bcp_types::enums::{Lang, Priority, Role, Status};
 /// content — summaries are ignored.
 #[test]
 fn full_pipeline_encode_decode_render() {
-    let payload = LcpEncoder::new()
+    let payload = BcpEncoder::new()
         .add_code(
             Lang::Rust,
             "src/main.rs",
             b"fn main() {\n    println!(\"hello\");\n}",
         )
-        .with_summary("Entry point: prints hello.")
+        .with_summary("Entry point: prints hello.").unwrap()
         .add_tool_result(
             "ripgrep",
             Status::Ok,
@@ -33,7 +33,7 @@ fn full_pipeline_encode_decode_render() {
         .encode()
         .expect("encoding should succeed");
 
-    let decoded = LcpDecoder::decode(&payload).expect("decoding should succeed");
+    let decoded = BcpDecoder::decode(&payload).expect("decoding should succeed");
     let driver = DefaultDriver;
 
     // ── XML mode (full content, no budget) ──────────────────────────
@@ -91,13 +91,13 @@ fn full_pipeline_encode_decode_render() {
 /// Verify Summary verbosity renders summaries where available.
 #[test]
 fn pipeline_with_summary_verbosity() {
-    let payload = LcpEncoder::new()
+    let payload = BcpEncoder::new()
         .add_code(
             Lang::Rust,
             "src/main.rs",
             b"fn main() {\n    println!(\"hello\");\n}",
         )
-        .with_summary("Entry point: prints hello.")
+        .with_summary("Entry point: prints hello.").unwrap()
         .add_tool_result(
             "ripgrep",
             Status::Ok,
@@ -106,7 +106,7 @@ fn pipeline_with_summary_verbosity() {
         .encode()
         .expect("encoding should succeed");
 
-    let decoded = LcpDecoder::decode(&payload).expect("decoding should succeed");
+    let decoded = BcpDecoder::decode(&payload).expect("decoding should succeed");
     let driver = DefaultDriver;
 
     let config = DriverConfig {
@@ -137,13 +137,13 @@ fn pipeline_with_summary_verbosity() {
 /// Verify that include_types filtering works through the full pipeline.
 #[test]
 fn pipeline_with_type_filter() {
-    let payload = LcpEncoder::new()
+    let payload = BcpEncoder::new()
         .add_code(Lang::Rust, "src/main.rs", b"fn main() {}")
         .add_conversation(Role::User, b"Hello")
         .encode()
         .expect("encoding should succeed");
 
-    let decoded = LcpDecoder::decode(&payload).expect("decoding should succeed");
+    let decoded = BcpDecoder::decode(&payload).expect("decoding should succeed");
     let driver = DefaultDriver;
 
     let config = DriverConfig {
@@ -171,18 +171,18 @@ fn pipeline_with_type_filter() {
 #[test]
 fn roundtrip_with_budget() {
     let big_content = "x".repeat(800); // ~200 tokens (heuristic: chars/4)
-    let payload = LcpEncoder::new()
+    let payload = BcpEncoder::new()
         // Block 0: Normal priority (default), has summary
         .add_code(Lang::Rust, "src/lib.rs", big_content.as_bytes())
-        .with_summary("Library exports and module declarations.")
+        .with_summary("Library exports and module declarations.").unwrap()
         // Block 2: Critical priority (annotation at block 1 targets block 0... but
         // with_priority targets the last non-annotation block)
         .add_code(Lang::Rust, "src/main.rs", big_content.as_bytes())
-        .with_priority(Priority::Critical)
+        .with_priority(Priority::Critical).unwrap()
         .encode()
         .expect("encoding should succeed");
 
-    let decoded = LcpDecoder::decode(&payload).expect("decoding should succeed");
+    let decoded = BcpDecoder::decode(&payload).expect("decoding should succeed");
     let driver = DefaultDriver;
 
     // Budget of 250: enough for one full block (~200 tokens) + one summary (~10),
@@ -213,18 +213,18 @@ fn roundtrip_with_budget() {
 /// to Full mode for the same blocks.
 #[test]
 fn adaptive_mode_without_budget_matches_full() {
-    let payload = LcpEncoder::new()
+    let payload = BcpEncoder::new()
         .add_code(
             Lang::Rust,
             "src/main.rs",
             b"fn main() {\n    println!(\"hello\");\n}",
         )
-        .with_summary("Entry point.")
+        .with_summary("Entry point.").unwrap()
         .add_tool_result("ripgrep", Status::Ok, b"3 matches found.")
         .encode()
         .expect("encoding should succeed");
 
-    let decoded = LcpDecoder::decode(&payload).expect("decoding should succeed");
+    let decoded = BcpDecoder::decode(&payload).expect("decoding should succeed");
     let driver = DefaultDriver;
 
     let adaptive_config = DriverConfig {
@@ -255,23 +255,23 @@ fn adaptive_mode_without_budget_matches_full() {
 #[test]
 fn mixed_priorities_budget_allocation() {
     let big = "y".repeat(400); // ~100 tokens each
-    let payload = LcpEncoder::new()
+    let payload = BcpEncoder::new()
         // Block 0: Background priority
         .add_code(Lang::Python, "bg.py", big.as_bytes())
-        .with_priority(Priority::Background)
+        .with_priority(Priority::Background).unwrap()
         // Block 2: Normal priority (default), has summary
         .add_code(Lang::Rust, "normal.rs", big.as_bytes())
-        .with_summary("Normal block summary.")
+        .with_summary("Normal block summary.").unwrap()
         // Block 4: High priority
         .add_code(Lang::Go, "high.go", big.as_bytes())
-        .with_priority(Priority::High)
+        .with_priority(Priority::High).unwrap()
         // Block 6: Critical priority
         .add_code(Lang::Java, "critical.java", big.as_bytes())
-        .with_priority(Priority::Critical)
+        .with_priority(Priority::Critical).unwrap()
         .encode()
         .expect("encoding should succeed");
 
-    let decoded = LcpDecoder::decode(&payload).expect("decoding should succeed");
+    let decoded = BcpDecoder::decode(&payload).expect("decoding should succeed");
     let driver = DefaultDriver;
 
     // Budget of 250: enough for Critical (~133tok code) + High (~133tok) but

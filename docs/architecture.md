@@ -4,12 +4,12 @@
 
 ```
 ┌──────────────────────────────────────────────────────────────────────┐
-│                        LCP Proof of Concept                         │
+│                        BCP Proof of Concept                         │
 │                                                                     │
 │  ┌─────────────┐    ┌──────────────┐    ┌───────────────────────┐   │
 │  │  Encoder    │    │  Wire Format │    │  Decoder / Driver     │   │
 │  │             │    │              │    │                       │   │
-│  │  Rust API   │──▶│  .lcp file   │──▶│  Binary ─▶ Blocks     │   │
+│  │  Rust API   │──▶│  .bcp file   │──▶│  Binary ─▶ Blocks     │   │
 │  │  (builder   │    │  (binary     │    │  Blocks ─▶ Text       │   │
 │  │   pattern)  │    │   payload)   │    │  (XML/MD/Minimal)     │   │
 │  └─────────────┘    └──────────────┘    └───────────────────────┘   │

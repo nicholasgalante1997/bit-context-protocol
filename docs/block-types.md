@@ -1,6 +1,6 @@
 # Block Types
 
-> Quick reference for all LCP block type IDs. See [Block Type Definitions](block-type-definitions.md) for full field layouts and Rust structs.
+> Quick reference for all BCP block type IDs. See [Block Type Definitions](block-type-definitions.md) for full field layouts and Rust structs.
 
 ## Summary
 

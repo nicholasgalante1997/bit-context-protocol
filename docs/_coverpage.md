@@ -8,7 +8,7 @@
     </svg>
 </div>
 
-# LLM Context Pack
+# Bit Context Protocol
 
 > A binary serialization format for structured LLM context
 

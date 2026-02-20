@@ -18,7 +18,7 @@ use bcp_types::structured_data::StructuredDataBlock;
 use bcp_types::summary::Summary;
 use bcp_types::tool_result::ToolResultBlock;
 use bcp_wire::block_frame::{BlockFlags, BlockFrame, block_type};
-use bcp_wire::header::{HEADER_SIZE, HeaderFlags, LcpHeader};
+use bcp_wire::header::{HEADER_SIZE, HeaderFlags, BcpHeader};
 
 use crate::compression::{self, COMPRESSION_THRESHOLD};
 use crate::error::EncodeError;
@@ -27,10 +27,10 @@ use crate::error::EncodeError;
 /// an [`EncodeError::BlockTooLarge`] during `.encode()`.
 const MAX_BLOCK_BODY_SIZE: usize = 16 * 1024 * 1024;
 
-/// LCP encoder — constructs a binary payload from structured blocks.
+/// BCP encoder — constructs a binary payload from structured blocks.
 ///
 /// The encoder is the tool-facing API that allows agents, MCP servers,
-/// and other producers to build LCP payloads. It follows the builder
+/// and other producers to build BCP payloads. It follows the builder
 /// pattern defined in RFC §5.6: methods like [`add_code`](Self::add_code),
 /// [`add_conversation`](Self::add_conversation), etc. append typed blocks
 /// to an internal list, and chainable modifiers like
@@ -78,18 +78,20 @@ const MAX_BLOCK_BODY_SIZE: usize = 16 * 1024 * 1024;
 /// # Usage
 ///
 /// ```rust
-/// use bcp_encoder::LcpEncoder;
+/// use bcp_encoder::BcpEncoder;
 /// use bcp_types::enums::{Lang, Role, Status, Priority};
 ///
-/// let payload = LcpEncoder::new()
+/// # fn main() -> Result<(), Box<dyn std::error::Error>> {
+/// let payload = BcpEncoder::new()
 ///     .add_code(Lang::Rust, "src/main.rs", b"fn main() {}")
-///     .with_summary("Entry point: CLI setup and server startup.")
-///     .with_priority(Priority::High)
+///     .with_summary("Entry point: CLI setup and server startup.")?
+///     .with_priority(Priority::High)?
 ///     .add_conversation(Role::User, b"Fix the timeout bug.")
 ///     .add_conversation(Role::Assistant, b"I'll examine the pool config...")
 ///     .add_tool_result("ripgrep", Status::Ok, b"3 matches found.")
-///     .encode()
-///     .unwrap();
+///     .encode()?;
+/// # Ok(())
+/// # }
 /// ```
 ///
 /// # Output layout
@@ -118,7 +120,7 @@ const MAX_BLOCK_BODY_SIZE: usize = 16 * 1024 * 1024;
 ///
 /// The payload is ready for storage or transmission — no further
 /// framing is required.
-pub struct LcpEncoder {
+pub struct BcpEncoder {
     blocks: Vec<PendingBlock>,
     flags: HeaderFlags,
     /// When `true`, the entire payload after the header is zstd-compressed.
@@ -157,7 +159,7 @@ struct PendingBlock {
     content_address: bool,
 }
 
-impl LcpEncoder {
+impl BcpEncoder {
     /// Create a new encoder with default settings (version 1.0, no flags).
     ///
     /// The encoder starts with an empty block list, no compression, and
@@ -445,17 +447,17 @@ impl LcpEncoder {
     /// compact UTF-8 description that the token budget engine can use as
     /// a stand-in when the full block content would exceed the budget.
     ///
-    /// # Panics
+    /// # Errors
     ///
-    /// Panics if no blocks have been added yet. Use this immediately
-    /// after an `.add_*()` call.
-    pub fn with_summary(&mut self, summary: &str) -> &mut Self {
+    /// Returns [`EncodeError::NoBlockTarget`] if no blocks have been
+    /// added yet. Use this immediately after an `.add_*()` call.
+    pub fn with_summary(&mut self, summary: &str) -> Result<&mut Self, EncodeError> {
         let block = self
             .blocks
             .last_mut()
-            .expect("with_summary called but no blocks have been added");
+            .ok_or(EncodeError::NoBlockTarget { method: "with_summary" })?;
         block.summary = Some(summary.to_string());
-        self
+        Ok(self)
     }
 
     /// Attach a priority annotation to the most recently added block.
@@ -465,15 +467,16 @@ impl LcpEncoder {
     /// The annotation's value is the priority byte (e.g. `0x02` for
     /// `Priority::High`).
     ///
-    /// # Panics
+    /// # Errors
     ///
-    /// Panics if no blocks have been added yet.
-    pub fn with_priority(&mut self, priority: Priority) -> &mut Self {
+    /// Returns [`EncodeError::NoBlockTarget`] if no blocks have been
+    /// added yet.
+    pub fn with_priority(&mut self, priority: Priority) -> Result<&mut Self, EncodeError> {
         let target_index = self
             .blocks
             .len()
             .checked_sub(1)
-            .expect("with_priority called but no blocks have been added");
+            .ok_or(EncodeError::NoBlockTarget { method: "with_priority" })?;
 
         #[allow(clippy::cast_possible_truncation)]
         let target_id = target_index as u32;
@@ -486,7 +489,7 @@ impl LcpEncoder {
                 value: vec![priority.to_wire_byte()],
             }),
         );
-        self
+        Ok(self)
     }
 
     // ── Compression modifiers ────────────────────────────────────────────
@@ -505,16 +508,17 @@ impl LcpEncoder {
     /// Has no effect if [`compress_payload`](Self::compress_payload) is
     /// also enabled — whole-payload compression takes precedence.
     ///
-    /// # Panics
+    /// # Errors
     ///
-    /// Panics if no blocks have been added yet.
-    pub fn with_compression(&mut self) -> &mut Self {
+    /// Returns [`EncodeError::NoBlockTarget`] if no blocks have been
+    /// added yet.
+    pub fn with_compression(&mut self) -> Result<&mut Self, EncodeError> {
         let block = self
             .blocks
             .last_mut()
-            .expect("with_compression called but no blocks have been added");
+            .ok_or(EncodeError::NoBlockTarget { method: "with_compression" })?;
         block.compress = true;
-        self
+        Ok(self)
     }
 
     /// Enable zstd compression for all blocks added so far and all
@@ -544,6 +548,12 @@ impl LcpEncoder {
     ///
     /// If compression doesn't reduce the total size, the payload is
     /// stored uncompressed and the header flag is not set.
+    ///
+    /// **Tradeoff**: Whole-payload compression disables incremental
+    /// streaming in `StreamingDecoder` — the decoder must buffer and
+    /// decompress the entire payload before yielding any blocks. If
+    /// streaming is important, use [`compress_blocks`](Self::compress_blocks)
+    /// instead.
     pub fn compress_payload(&mut self) -> &mut Self {
         self.compress_payload = true;
         self
@@ -582,16 +592,17 @@ impl LcpEncoder {
     /// hash reference is always below [`COMPRESSION_THRESHOLD`],
     /// reference blocks are never per-block compressed.
     ///
-    /// # Panics
+    /// # Errors
     ///
-    /// Panics if no blocks have been added yet.
-    pub fn with_content_addressing(&mut self) -> &mut Self {
+    /// Returns [`EncodeError::NoBlockTarget`] if no blocks have been
+    /// added yet.
+    pub fn with_content_addressing(&mut self) -> Result<&mut Self, EncodeError> {
         let block = self
             .blocks
             .last_mut()
-            .expect("with_content_addressing called but no blocks have been added");
+            .ok_or(EncodeError::NoBlockTarget { method: "with_content_addressing" })?;
         block.content_address = true;
-        self
+        Ok(self)
     }
 
     /// Enable automatic deduplication across all blocks.
@@ -612,7 +623,7 @@ impl LcpEncoder {
 
     // ── Encode ──────────────────────────────────────────────────────────
 
-    /// Serialize all accumulated blocks into a complete LCP payload.
+    /// Serialize all accumulated blocks into a complete BCP payload.
     ///
     /// The encode pipeline processes each `PendingBlock` through up to
     /// three stages:
@@ -724,7 +735,7 @@ impl LcpEncoder {
         };
 
         // 5. Write the final header with correct flags.
-        let header = LcpHeader::new(header_flags);
+        let header = BcpHeader::new(header_flags);
         header.write_to(&mut output[..HEADER_SIZE])?;
 
         Ok(output)
@@ -821,7 +832,7 @@ impl LcpEncoder {
     }
 }
 
-impl Default for LcpEncoder {
+impl Default for BcpEncoder {
     fn default() -> Self {
         Self::new()
     }
@@ -831,14 +842,14 @@ impl Default for LcpEncoder {
 mod tests {
     use super::*;
     use bcp_types::file_tree::FileEntryKind;
-    use bcp_wire::header::LCP_MAGIC;
+    use bcp_wire::header::BCP_MAGIC;
 
     // ── Helper ──────────────────────────────────────────────────────────
 
-    /// Verify that a payload starts with the LCP magic number.
+    /// Verify that a payload starts with the BCP magic number.
     fn assert_starts_with_magic(payload: &[u8]) {
         assert!(payload.len() >= HEADER_SIZE, "payload too short for header");
-        assert_eq!(&payload[..4], &LCP_MAGIC, "missing LCP magic");
+        assert_eq!(&payload[..4], &BCP_MAGIC, "missing BCP magic");
     }
 
     /// Verify that a payload ends with a valid END sentinel.
@@ -856,7 +867,7 @@ mod tests {
 
     #[test]
     fn encode_single_code_block_produces_valid_magic() {
-        let payload = LcpEncoder::new()
+        let payload = BcpEncoder::new()
             .add_code(Lang::Rust, "src/main.rs", b"fn main() {}")
             .encode()
             .unwrap();
@@ -866,9 +877,9 @@ mod tests {
 
     #[test]
     fn builder_methods_are_chainable() {
-        let payload = LcpEncoder::new()
+        let payload = BcpEncoder::new()
             .add_code(Lang::Rust, "src/lib.rs", b"pub fn hello() {}")
-            .with_summary("Hello function.")
+            .with_summary("Hello function.").unwrap()
             .add_conversation(Role::User, b"What does this do?")
             .encode()
             .unwrap();
@@ -879,9 +890,9 @@ mod tests {
 
     #[test]
     fn with_summary_sets_has_summary_flag() {
-        let payload = LcpEncoder::new()
+        let payload = BcpEncoder::new()
             .add_code(Lang::Python, "main.py", b"print('hi')")
-            .with_summary("Prints a greeting.")
+            .with_summary("Prints a greeting.").unwrap()
             .encode()
             .unwrap();
 
@@ -896,9 +907,9 @@ mod tests {
 
     #[test]
     fn with_priority_appends_annotation_block() {
-        let payload = LcpEncoder::new()
+        let payload = BcpEncoder::new()
             .add_code(Lang::Rust, "lib.rs", b"// code")
-            .with_priority(Priority::High)
+            .with_priority(Priority::High).unwrap()
             .encode()
             .unwrap();
 
@@ -923,13 +934,13 @@ mod tests {
 
     #[test]
     fn empty_encoder_returns_empty_payload_error() {
-        let result = LcpEncoder::new().encode();
+        let result = BcpEncoder::new().encode();
         assert!(matches!(result, Err(EncodeError::EmptyPayload)));
     }
 
     #[test]
     fn payload_ends_with_end_sentinel() {
-        let payload = LcpEncoder::new()
+        let payload = BcpEncoder::new()
             .add_conversation(Role::User, b"hello")
             .encode()
             .unwrap();
@@ -939,7 +950,7 @@ mod tests {
 
     #[test]
     fn all_eleven_block_types_encode_without_error() {
-        let payload = LcpEncoder::new()
+        let payload = BcpEncoder::new()
             .add_code(Lang::Rust, "main.rs", b"fn main() {}")
             .add_conversation(Role::User, b"hello")
             .add_file_tree(
@@ -963,18 +974,16 @@ mod tests {
                 }],
             )
             .add_annotation(0, AnnotationKind::Tag, b"important")
+            .add_embedding_ref(b"vec-001", &[0xAB; 32], "text-embedding-3-small")
             .add_image(MediaType::Png, "screenshot", b"\x89PNG\r\n")
             .add_extension("myco", "custom_block", b"custom data")
-            // EMBEDDING_REF is not in the spec's 11 encoder methods
-            // (it's a decode-only block), but we test the 11 that are specified
             .encode()
             .unwrap();
 
         assert_starts_with_magic(&payload);
         assert_ends_with_end_sentinel(&payload);
 
-        // Verify we can walk all 10 content blocks + 1 annotation = 11 frames
-        // (the add_annotation above counts as one of the 11 block addition methods)
+        // Verify we can walk all 12 content blocks (11 semantic + 1 annotation)
         let mut cursor = HEADER_SIZE;
         let mut block_count = 0;
         loop {
@@ -986,12 +995,12 @@ mod tests {
                 None => break, // END sentinel
             }
         }
-        assert_eq!(block_count, 10, "expected 10 content blocks");
+        assert_eq!(block_count, 11, "expected 11 content blocks");
     }
 
     #[test]
     fn payload_byte_length_matches_calculation() {
-        let mut enc = LcpEncoder::new();
+        let mut enc = BcpEncoder::new();
         enc.add_code(Lang::Rust, "x.rs", b"let x = 1;");
         enc.add_conversation(Role::User, b"hi");
 
@@ -1031,7 +1040,7 @@ mod tests {
     #[test]
     fn optional_fields_omitted_when_none() {
         // CODE block without line_range
-        let payload = LcpEncoder::new()
+        let payload = BcpEncoder::new()
             .add_code(Lang::Rust, "x.rs", b"code")
             .encode()
             .unwrap();
@@ -1045,7 +1054,7 @@ mod tests {
         assert!(code.line_range.is_none());
 
         // CONVERSATION block without tool_call_id
-        let payload = LcpEncoder::new()
+        let payload = BcpEncoder::new()
             .add_conversation(Role::User, b"msg")
             .encode()
             .unwrap();
@@ -1060,7 +1069,7 @@ mod tests {
 
     #[test]
     fn code_range_includes_line_numbers() {
-        let payload = LcpEncoder::new()
+        let payload = BcpEncoder::new()
             .add_code_range(Lang::Rust, "src/lib.rs", b"fn foo() {}", 10, 20)
             .encode()
             .unwrap();
@@ -1075,7 +1084,7 @@ mod tests {
 
     #[test]
     fn conversation_tool_includes_tool_call_id() {
-        let payload = LcpEncoder::new()
+        let payload = BcpEncoder::new()
             .add_conversation_tool(Role::Tool, b"result", "call_123")
             .encode()
             .unwrap();
@@ -1090,9 +1099,9 @@ mod tests {
 
     #[test]
     fn summary_is_decodable_from_block_body() {
-        let payload = LcpEncoder::new()
+        let payload = BcpEncoder::new()
             .add_code(Lang::Rust, "main.rs", b"fn main() {}")
-            .with_summary("Entry point for the application.")
+            .with_summary("Entry point for the application.").unwrap()
             .encode()
             .unwrap();
 
@@ -1115,10 +1124,10 @@ mod tests {
     #[test]
     fn rfc_example_encodes_successfully() {
         // Reproduces the example from RFC §12.1 / SPEC_03 §1
-        let payload = LcpEncoder::new()
+        let payload = BcpEncoder::new()
             .add_code(Lang::Rust, "src/main.rs", b"fn main() { todo!() }")
-            .with_summary("Entry point: CLI setup and server startup.")
-            .with_priority(Priority::High)
+            .with_summary("Entry point: CLI setup and server startup.").unwrap()
+            .with_priority(Priority::High).unwrap()
             .add_conversation(Role::User, b"Fix the timeout bug.")
             .add_conversation(Role::Assistant, b"I'll examine the pool config...")
             .add_tool_result("ripgrep", Status::Ok, b"3 matches found.")
@@ -1155,8 +1164,8 @@ mod tests {
 
     #[test]
     fn default_impl_matches_new() {
-        let from_new = LcpEncoder::new();
-        let from_default = LcpEncoder::default();
+        let from_new = BcpEncoder::new();
+        let from_default = BcpEncoder::default();
         assert!(from_new.blocks.is_empty());
         assert!(from_default.blocks.is_empty());
     }
@@ -1167,9 +1176,9 @@ mod tests {
     fn per_block_compression_sets_compressed_flag() {
         // Create a large, compressible block (exceeds COMPRESSION_THRESHOLD)
         let big_content = "fn main() { println!(\"hello world\"); }\n".repeat(50);
-        let payload = LcpEncoder::new()
+        let payload = BcpEncoder::new()
             .add_code(Lang::Rust, "main.rs", big_content.as_bytes())
-            .with_compression()
+            .with_compression().unwrap()
             .encode()
             .unwrap();
 
@@ -1188,9 +1197,9 @@ mod tests {
 
     #[test]
     fn small_block_not_compressed_even_when_requested() {
-        let payload = LcpEncoder::new()
+        let payload = BcpEncoder::new()
             .add_code(Lang::Rust, "x.rs", b"let x = 1;")
-            .with_compression()
+            .with_compression().unwrap()
             .encode()
             .unwrap();
 
@@ -1206,7 +1215,7 @@ mod tests {
     #[test]
     fn compress_blocks_applies_to_all() {
         let big_content = "use std::io;\n".repeat(100);
-        let payload = LcpEncoder::new()
+        let payload = BcpEncoder::new()
             .add_code(Lang::Rust, "a.rs", big_content.as_bytes())
             .add_code(Lang::Rust, "b.rs", big_content.as_bytes())
             .compress_blocks()
@@ -1229,13 +1238,13 @@ mod tests {
     #[test]
     fn whole_payload_compression_sets_header_flag() {
         let big_content = "pub fn hello() -> &'static str { \"world\" }\n".repeat(100);
-        let payload = LcpEncoder::new()
+        let payload = BcpEncoder::new()
             .add_code(Lang::Rust, "main.rs", big_content.as_bytes())
             .compress_payload()
             .encode()
             .unwrap();
 
-        let header = LcpHeader::read_from(&payload[..HEADER_SIZE]).unwrap();
+        let header = BcpHeader::read_from(&payload[..HEADER_SIZE]).unwrap();
         assert!(
             header.flags.is_compressed(),
             "header COMPRESSED flag should be set for whole-payload compression"
@@ -1247,14 +1256,14 @@ mod tests {
         // When whole-payload compression is active, individual block
         // COMPRESSED flags should NOT be set.
         let big_content = "pub fn hello() -> &'static str { \"world\" }\n".repeat(100);
-        let payload = LcpEncoder::new()
+        let payload = BcpEncoder::new()
             .add_code(Lang::Rust, "main.rs", big_content.as_bytes())
-            .with_compression()
+            .with_compression().unwrap()
             .compress_payload()
             .encode()
             .unwrap();
 
-        let header = LcpHeader::read_from(&payload[..HEADER_SIZE]).unwrap();
+        let header = BcpHeader::read_from(&payload[..HEADER_SIZE]).unwrap();
         assert!(header.flags.is_compressed());
 
         // Decompress the payload to check individual blocks
@@ -1271,13 +1280,13 @@ mod tests {
     #[test]
     fn whole_payload_no_savings_stays_uncompressed() {
         // Tiny payload — zstd overhead exceeds savings
-        let payload = LcpEncoder::new()
+        let payload = BcpEncoder::new()
             .add_code(Lang::Rust, "x.rs", b"x")
             .compress_payload()
             .encode()
             .unwrap();
 
-        let header = LcpHeader::read_from(&payload[..HEADER_SIZE]).unwrap();
+        let header = BcpHeader::read_from(&payload[..HEADER_SIZE]).unwrap();
         assert!(
             !header.flags.is_compressed(),
             "header COMPRESSED flag should NOT be set when compression yields no savings"
@@ -1289,10 +1298,10 @@ mod tests {
     #[test]
     fn content_addressing_sets_reference_flag() {
         let store = Arc::new(crate::MemoryContentStore::new());
-        let payload = LcpEncoder::new()
+        let payload = BcpEncoder::new()
             .set_content_store(store.clone())
             .add_code(Lang::Rust, "main.rs", b"fn main() {}")
-            .with_content_addressing()
+            .with_content_addressing().unwrap()
             .encode()
             .unwrap();
 
@@ -1316,9 +1325,9 @@ mod tests {
 
     #[test]
     fn content_addressing_without_store_errors() {
-        let result = LcpEncoder::new()
+        let result = BcpEncoder::new()
             .add_code(Lang::Rust, "main.rs", b"fn main() {}")
-            .with_content_addressing()
+            .with_content_addressing().unwrap()
             .encode();
 
         assert!(
@@ -1334,7 +1343,7 @@ mod tests {
         // path + content + lang) for auto-dedup to detect a duplicate.
         let content = b"fn main() {}";
 
-        let payload = LcpEncoder::new()
+        let payload = BcpEncoder::new()
             .set_content_store(store.clone())
             .auto_dedup()
             .add_code(Lang::Rust, "main.rs", content)
@@ -1363,7 +1372,7 @@ mod tests {
 
     #[test]
     fn auto_dedup_without_store_errors() {
-        let result = LcpEncoder::new()
+        let result = BcpEncoder::new()
             .auto_dedup()
             .add_code(Lang::Rust, "x.rs", b"code")
             .encode();
@@ -1377,11 +1386,11 @@ mod tests {
         // below the compression threshold — verify no COMPRESSED flag.
         let store = Arc::new(crate::MemoryContentStore::new());
         let big_content = "fn main() { println!(\"hello\"); }\n".repeat(50);
-        let payload = LcpEncoder::new()
+        let payload = BcpEncoder::new()
             .set_content_store(store)
             .add_code(Lang::Rust, "main.rs", big_content.as_bytes())
-            .with_content_addressing()
-            .with_compression()
+            .with_content_addressing().unwrap()
+            .with_compression().unwrap()
             .encode()
             .unwrap();
 
@@ -1402,17 +1411,17 @@ mod tests {
         // Same path + content = identical TLV body = single store entry
         let content = "fn main() { println!(\"hello\"); }\n".repeat(50);
 
-        let payload = LcpEncoder::new()
+        let payload = BcpEncoder::new()
             .set_content_store(store.clone())
             .compress_payload()
             .add_code(Lang::Rust, "main.rs", content.as_bytes())
-            .with_content_addressing()
+            .with_content_addressing().unwrap()
             .add_code(Lang::Rust, "main.rs", content.as_bytes())
-            .with_content_addressing()
+            .with_content_addressing().unwrap()
             .encode()
             .unwrap();
 
-        let header = LcpHeader::read_from(&payload[..HEADER_SIZE]).unwrap();
+        let header = BcpHeader::read_from(&payload[..HEADER_SIZE]).unwrap();
         // The payload might or might not be compressed (two 32-byte hashes
         // plus framing may not compress well), but if it is, verify it's valid.
         if header.flags.is_compressed() {
@@ -1495,14 +1504,14 @@ mod tests {
 }
 "#;
 
-        let uncompressed_payload = LcpEncoder::new()
+        let uncompressed_payload = BcpEncoder::new()
             .add_code(Lang::Rust, "config.rs", rust_code.as_bytes())
             .encode()
             .unwrap();
 
-        let compressed_payload = LcpEncoder::new()
+        let compressed_payload = BcpEncoder::new()
             .add_code(Lang::Rust, "config.rs", rust_code.as_bytes())
-            .with_compression()
+            .with_compression().unwrap()
             .encode()
             .unwrap();
 
@@ -1521,16 +1530,16 @@ mod tests {
         // only the header COMPRESSED flag should be set; individual blocks
         // should NOT have their COMPRESSED flags set.
         let big_content = "pub fn process() -> Result<(), Error> { Ok(()) }\n".repeat(50);
-        let payload = LcpEncoder::new()
+        let payload = BcpEncoder::new()
             .add_code(Lang::Rust, "a.rs", big_content.as_bytes())
-            .with_compression()
+            .with_compression().unwrap()
             .add_code(Lang::Rust, "b.rs", big_content.as_bytes())
-            .with_compression()
+            .with_compression().unwrap()
             .compress_payload()
             .encode()
             .unwrap();
 
-        let header = LcpHeader::read_from(&payload[..HEADER_SIZE]).unwrap();
+        let header = BcpHeader::read_from(&payload[..HEADER_SIZE]).unwrap();
         assert!(
             header.flags.is_compressed(),
             "header should have COMPRESSED flag"
@@ -1558,12 +1567,12 @@ mod tests {
         let store = Arc::new(crate::MemoryContentStore::new());
         let big_code = "fn compute() -> i64 { 42 }\n".repeat(50);
 
-        let payload = LcpEncoder::new()
+        let payload = BcpEncoder::new()
             .set_content_store(store.clone())
             .auto_dedup()
             .add_code(Lang::Rust, "lib.rs", big_code.as_bytes())
-            .with_summary("Core computation module.")
-            .with_compression()
+            .with_summary("Core computation module.").unwrap()
+            .with_compression().unwrap()
             .add_code(Lang::Rust, "lib.rs", big_code.as_bytes()) // auto-dedup
             .add_conversation(Role::User, b"Review this code")
             .add_tool_result("clippy", Status::Ok, b"No warnings")
@@ -1571,7 +1580,7 @@ mod tests {
             .unwrap();
 
         // Decode with the same store
-        let decoded = bcp_decoder::LcpDecoder::decode_with_store(&payload, store.as_ref()).unwrap();
+        let decoded = bcp_decoder::BcpDecoder::decode_with_store(&payload, store.as_ref()).unwrap();
 
         assert_eq!(decoded.blocks.len(), 4);
         assert_eq!(decoded.blocks[0].block_type, bcp_types::BlockType::Code);

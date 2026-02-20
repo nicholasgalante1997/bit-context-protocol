@@ -2,7 +2,7 @@
 
 <span class="badge badge-green">Complete</span> <span class="badge badge-blue">Phase 4</span>
 
-> The developer interface for the LCP stack. A five-command binary that lets you inspect, validate, encode, decode, and profile `.lcp` files without writing a single line of Rust.
+> The developer interface for the BCP stack. A five-command binary that lets you inspect, validate, encode, decode, and profile `.bcp` files without writing a single line of Rust.
 
 ## Crate Info
 
@@ -20,8 +20,8 @@
 `bcp-cli` is the outermost layer of the protocol stack. Where the library crates expose Rust APIs, the CLI exposes the same functionality as shell-friendly subcommands, making the full encode→decode→render pipeline accessible without a build step.
 
 ```
-JSON manifest ──▶  bcp encode  ──▶  .lcp file  ──▶  bcp validate / inspect / decode / stats
-                    (LcpEncoder)                      (LcpDecoder + DefaultDriver)
+JSON manifest ──▶  bcp encode  ──▶  .bcp file  ──▶  bcp validate / inspect / decode / stats
+                    (BcpEncoder)                      (BcpDecoder + DefaultDriver)
 ```
 
 Every subcommand maps directly to a library API:
@@ -30,11 +30,11 @@ Every subcommand maps directly to a library API:
 ┌────────────┬─────────────────────────────────────────────────────┐
 │ Command    │ Library API used                                    │
 ├────────────┼─────────────────────────────────────────────────────┤
-│ inspect    │ LcpDecoder::decode → print BlockContent variants    │
-│ validate   │ LcpDecoder::decode → Ok / Err diagnostic           │
-│ encode     │ LcpEncoder builder → fs::write                      │
-│ decode     │ LcpDecoder::decode + DefaultDriver::render          │
-│ stats      │ LcpDecoder::decode + HeuristicEstimator             │
+│ inspect    │ BcpDecoder::decode → print BlockContent variants    │
+│ validate   │ BcpDecoder::decode → Ok / Err diagnostic           │
+│ encode     │ BcpEncoder builder → fs::write                      │
+│ decode     │ BcpDecoder::decode + DefaultDriver::render          │
+│ stats      │ BcpDecoder::decode + HeuristicEstimator             │
 └────────────┴─────────────────────────────────────────────────────┘
 ```
 
@@ -44,7 +44,7 @@ Every subcommand maps directly to a library API:
 
 ### `bcp inspect`
 
-Print a human-readable block summary of an LCP file.
+Print a human-readable block summary of a BCP file.
 
 ```bash
 bcp inspect <FILE> [--show-body] [--show-hex] [--block N]
@@ -65,7 +65,7 @@ bcp inspect <FILE> [--show-body] [--show-hex] [--block N]
 **Example output:**
 
 ```text
-Header: LCP v1.0, flags=0x00, 6 blocks
+Header: BCP v1.0, flags=0x00, 6 blocks
 Block 0: CODE [rust] path="src/main.rs" (32 bytes)
          Summary: "Entry point"
          Body:    fn main() { println!("hello"); }
@@ -85,7 +85,7 @@ END sentinel at offset 278
 Read file bytes
       │
       ▼
-LcpDecoder::decode
+BcpDecoder::decode
       │
       ├── Err ──▶ return Err (anyhow propagation → exit 1)
       │
@@ -108,7 +108,7 @@ Print: --- END sentinel at offset M
 
 ### `bcp validate`
 
-Check an LCP file for structural correctness. Exits 0 on success, 1 on failure.
+Check a BCP file for structural correctness. Exits 0 on success, 1 on failure.
 
 ```bash
 bcp validate <FILE>
@@ -117,7 +117,7 @@ bcp validate <FILE>
 **Success output:**
 
 ```text
-✓ Header: valid (LCP v1.0)
+✓ Header: valid (BCP v1.0)
 ✓ Blocks: 6 blocks parsed successfully
 ✓ Sentinel: END block present
 ✓ Integrity: all block bodies parse without error
@@ -126,10 +126,10 @@ bcp validate <FILE>
 **Failure output:**
 
 ```text
-✗ Error: invalid header — invalid magic number: expected 0x4C435000, got 0xDEADBEEF
+✗ Error: invalid header — invalid magic number: expected 0x42435000, got 0xDEADBEEF
 ```
 
-The validation runs a single `LcpDecoder::decode` call, which covers all four structural layers defined in RFC §4:
+The validation runs a single `BcpDecoder::decode` call, which covers all four structural layers defined in RFC §4:
 
 ```text
 1. Header      — magic number, version, reserved byte
@@ -157,7 +157,7 @@ The validation runs a single `LcpDecoder::decode` call, which covers all four st
 
 ### `bcp encode`
 
-Create an LCP file from a JSON manifest.
+Create a BCP file from a JSON manifest.
 
 ```bash
 bcp encode <MANIFEST> -o <OUTPUT> [--compress-blocks] [--compress-payload] [--dedup]
@@ -260,7 +260,7 @@ priority: critical | high | normal | low | background
 Parse JSON manifest
       │
       ▼
-Create LcpEncoder
+Create BcpEncoder
       │
       ├── --dedup: set MemoryContentStore + auto_dedup()
       ├── --compress-blocks: compress_blocks()
@@ -287,7 +287,7 @@ Wrote N bytes to <path>
 
 ### `bcp decode`
 
-Render an LCP file as model-ready text.
+Render a BCP file as model-ready text.
 
 ```bash
 bcp decode <FILE> [--mode xml|markdown|minimal] [--verbosity full|summary|adaptive]
@@ -324,7 +324,7 @@ bcp decode <FILE> [--mode xml|markdown|minimal] [--verbosity full|summary|adapti
 
 ```bash
 # Only render code and conversation blocks
-bcp decode context.lcp --include code,conversation --mode minimal
+bcp decode context.bcp --include code,conversation --mode minimal
 ```
 
 **Budget-aware decoding:**
@@ -335,7 +335,7 @@ When `--budget N` is set with `--verbosity adaptive`, the driver's budget engine
 
 ### `bcp stats`
 
-Print size and token-efficiency statistics for an LCP file.
+Print size and token-efficiency statistics for a BCP file.
 
 ```bash
 bcp stats <FILE>
@@ -344,8 +344,8 @@ bcp stats <FILE>
 **Example output:**
 
 ```text
-File:    context.lcp  (282 bytes)
-Header:  LCP v1.0, flags=0x00 (uncompressed)
+File:    context.bcp  (282 bytes)
+Header:  BCP v1.0, flags=0x00 (uncompressed)
 Blocks:  6 total
 
 Type                 Count   Bytes
@@ -380,7 +380,7 @@ crates/bcp-cli/
     ├── main.rs         — Cli/Commands/Args structs, dispatch, exit code handling
     ├── cmd_inspect.rs  — bcp inspect
     ├── cmd_validate.rs — bcp validate
-    ├── cmd_encode.rs   — bcp encode (manifest parsing, LcpEncoder builder)
+    ├── cmd_encode.rs   — bcp encode (manifest parsing, BcpEncoder builder)
     ├── cmd_decode.rs   — bcp decode (DefaultDriver dispatch)
     └── cmd_stats.rs    — bcp stats (block distribution, HeuristicEstimator)
 ```
@@ -437,12 +437,12 @@ cat > /tmp/test.json << 'EOF'
 }
 EOF
 
-cargo run -p bcp-cli -- encode /tmp/test.json -o /tmp/test.lcp
-cargo run -p bcp-cli -- validate /tmp/test.lcp
-cargo run -p bcp-cli -- inspect /tmp/test.lcp --show-body
-cargo run -p bcp-cli -- decode /tmp/test.lcp --mode xml
-cargo run -p bcp-cli -- decode /tmp/test.lcp --mode minimal --include code
-cargo run -p bcp-cli -- stats /tmp/test.lcp
+cargo run -p bcp-cli -- encode /tmp/test.json -o /tmp/test.bcp
+cargo run -p bcp-cli -- validate /tmp/test.bcp
+cargo run -p bcp-cli -- inspect /tmp/test.bcp --show-body
+cargo run -p bcp-cli -- decode /tmp/test.bcp --mode xml
+cargo run -p bcp-cli -- decode /tmp/test.bcp --mode minimal --include code
+cargo run -p bcp-cli -- stats /tmp/test.bcp
 
 # Pedantic clippy
 cargo clippy -p bcp-cli -- -W clippy::pedantic
@@ -455,11 +455,11 @@ cargo clippy -p bcp-cli -- -W clippy::pedantic
 All commands return `anyhow::Result<()>`. The `main()` dispatcher prints errors using `anyhow`'s `{:#}` format (chain of context) and calls `process::exit(1)`.
 
 ```text
-$ bcp encode /tmp/missing.json -o /tmp/out.lcp
+$ bcp encode /tmp/missing.json -o /tmp/out.bcp
 error: cannot read /tmp/missing.json: No such file or directory (os error 2)
 
-$ bcp decode /tmp/corrupt.lcp
-error: failed to decode /tmp/corrupt.lcp: invalid header — invalid magic number: expected 0x4C435000, got 0x00000000
+$ bcp decode /tmp/corrupt.bcp
+error: failed to decode /tmp/corrupt.bcp: invalid header — invalid magic number: expected 0x42435000, got 0x00000000
 ```
 
 Exit codes:
@@ -473,8 +473,8 @@ Exit codes:
 └──────┴────────────────────────────────────────────────────┘
 ```
 
-`bcp validate` is the only command that intentionally returns exit 1 for valid-but-invalid-LCP files (as opposed to I/O errors) — the distinction is intentional so you can use it as a pre-commit check:
+`bcp validate` is the only command that intentionally returns exit 1 for valid-but-invalid-BCP files (as opposed to I/O errors) — the distinction is intentional so you can use it as a pre-commit check:
 
 ```bash
-bcp validate context.lcp || exit 1
+bcp validate context.bcp || exit 1
 ```

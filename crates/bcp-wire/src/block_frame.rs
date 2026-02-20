@@ -41,7 +41,7 @@ impl BlockFlags {
 /// Known block type IDs.
 ///
 /// These are the semantic type tags that appear on the wire.
-/// The `lcp-types` crate defines the full typed structs for each.
+/// The `bcp-types` crate defines the full typed structs for each.
 pub mod block_type {
     pub const CODE: u8 = 0x01;
     pub const CONVERSATION: u8 = 0x02;
@@ -141,12 +141,18 @@ impl BlockFrame {
         )?;
         cursor += n;
 
-        let block_type = block_type_raw as u8;
-
-        // END sentinel: signal that the stream is done
-        if block_type == block_type::END {
+        // END sentinel: check the full varint value, not just the low byte.
+        // A truncating `as u8` cast would falsely match multi-byte varints
+        // whose low 8 bits happen to be 0xFF (e.g., 16383 → 0xFF).
+        if block_type_raw == u64::from(block_type::END) {
             return Ok(None);
         }
+
+        let block_type = u8::try_from(block_type_raw).map_err(|_| {
+            WireError::InvalidBlockType {
+                raw: block_type_raw,
+            }
+        })?;
 
         // 2. Flags (single byte)
         let flags_byte = *buf
@@ -162,10 +168,22 @@ impl BlockFrame {
         )?;
         cursor += n;
 
-        let content_len = content_len as usize;
+        // Check for overflow before converting to usize
+        let content_len_usize = usize::try_from(content_len).map_err(|_| {
+            WireError::UnexpectedEof {
+                offset: cursor, // position after content_len varint
+            }
+        })?;
 
         // 4. Body bytes
-        let body_end = cursor + content_len;
+        let body_end = match cursor.checked_add(content_len_usize) {
+            Some(end) => end,
+            None => {
+                return Err(WireError::UnexpectedEof {
+                    offset: buf.len(),
+                })
+            }
+        };
         if buf.len() < body_end {
             return Err(WireError::UnexpectedEof { offset: buf.len() });
         }

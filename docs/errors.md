@@ -10,7 +10,7 @@ Low-level binary format errors. Used directly by `bcp-wire` and wrapped by downs
 |---------|---------|---------|
 | `VarintTooLong` | Varint exceeds 10 bytes without termination | Malformed or corrupted varint data |
 | `UnexpectedEof { offset }` | Input ends before a complete read | Truncated payload or buffer too short |
-| `InvalidMagic { found }` | First 4 bytes are not `LCP\0` | Not an LCP file, or wrong byte order |
+| `InvalidMagic { found }` | First 4 bytes are not `BCP\0` | Not a BCP file, or wrong byte order |
 | `UnsupportedVersion { major, minor }` | Major version is not 1 | Future version or corrupted header |
 | `ReservedNonZero { offset, value }` | Reserved byte at offset is not 0x00 | Corrupted header or incompatible producer |
 | `Io(io::Error)` | Underlying I/O failure | File read/write errors |
@@ -48,7 +48,7 @@ Payload construction errors. Raised during the `encode()` call.
 |---------|---------|---------|
 | `EmptyPayload` | `encode()` called with no blocks added | Builder has zero pending blocks |
 | `BlockTooLarge { size, limit }` | Single block body exceeds 16 MiB | Extremely large content field |
-| `InvalidSummaryTarget` | Defined but unused in current impl | Panics are used instead |
+| `NoBlockTarget { method }` | Modifier called with no preceding block | `with_summary()`, `with_priority()`, `with_compression()`, or `with_content_addressing()` called before any `.add_*()` |
 | `MissingContentStore` | Content addressing enabled without a store | `with_content_addressing()` or `auto_dedup()` called, but `set_content_store()` was not |
 | `Compression(CompressionError)` | Zstd compression/decompression failure | Transparent delegation |
 | `Wire(WireError)` | Wire-level serialization failure | Header or frame write error |

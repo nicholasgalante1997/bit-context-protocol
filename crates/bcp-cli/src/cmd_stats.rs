@@ -1,14 +1,14 @@
 /// Implementation of `bcp stats`.
 ///
-/// Decodes an LCP file and prints a structured statistics report covering
+/// Decodes a BCP file and prints a structured statistics report covering
 /// file size, block-type distribution, compression status, and heuristic
 /// token estimates for all three render modes.
 ///
 /// # Example output
 ///
 /// ```text
-/// File:    /tmp/context.lcp  (282 bytes)
-/// Header:  LCP v1.0, flags=0x00  (uncompressed)
+/// File:    /tmp/context.bcp  (282 bytes)
+/// Header:  BCP v1.0, flags=0x00  (uncompressed)
 /// Blocks:  6 total
 ///
 /// Type              Count   Bytes
@@ -35,9 +35,9 @@ use std::collections::HashMap;
 use std::fs;
 
 use anyhow::{Context, Result};
-use bcp_decoder::LcpDecoder;
+use bcp_decoder::BcpDecoder;
 use bcp_driver::{
-    DefaultDriver, DriverConfig, HeuristicEstimator, LcpDriver, OutputMode, TokenEstimator,
+    DefaultDriver, DriverConfig, HeuristicEstimator, BcpDriver, OutputMode, TokenEstimator,
     Verbosity,
 };
 use bcp_types::block::BlockContent;
@@ -53,7 +53,7 @@ use crate::StatsArgs;
 ///
 /// # Errors
 ///
-/// Returns an error if the file cannot be read or the LCP payload fails
+/// Returns an error if the file cannot be read or the BCP payload fails
 /// structural validation.
 pub fn run(args: &StatsArgs) -> Result<()> {
     let bytes =
@@ -61,7 +61,7 @@ pub fn run(args: &StatsArgs) -> Result<()> {
 
     let file_size = bytes.len();
 
-    let decoded = LcpDecoder::decode(&bytes)
+    let decoded = BcpDecoder::decode(&bytes)
         .with_context(|| format!("failed to decode {}", args.file.display()))?;
 
     let header = &decoded.header;
@@ -130,7 +130,7 @@ pub fn run(args: &StatsArgs) -> Result<()> {
 
     println!("File:    {}  ({file_size} bytes)", args.file.display());
     println!(
-        "Header:  LCP v{}.{}, flags=0x{:02X}{compression_note}",
+        "Header:  BCP v{}.{}, flags=0x{:02X}{compression_note}",
         header.version_major,
         header.version_minor,
         header.flags.raw()
