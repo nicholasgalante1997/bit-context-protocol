@@ -21,6 +21,10 @@ pub enum WireError {
     #[error("reserved field at offset {offset} was {value:#04X}, expected 0x00")]
     ReservedNonZero { offset: usize, value: u8 },
 
+    /// Block type varint decoded to a value that does not fit in a `u8`.
+    #[error("invalid block type: varint value {raw} exceeds u8 range")]
+    InvalidBlockType { raw: u64 },
+
     /// I/O error during read or write.
     #[error(transparent)]
     Io(#[from] std::io::Error),

@@ -252,21 +252,28 @@ impl BcpDecoder {
     /// than hardcoding, in case future encoders use a different varint
     /// encoding width.
     fn end_sentinel_size(buf: &[u8]) -> Result<usize, DecodeError> {
-        // Read the block_type varint (0xFF)
+        // Read the block_type varint (0xFF → encodes as [0xFF, 0x01])
         let (_, type_len) = bcp_wire::varint::decode_varint(buf)?;
         let mut size = type_len;
 
         // flags byte
-        size += 1;
-
-        // content_len varint (should be 0)
-        let flags_and_len = &buf[size..];
-        if flags_and_len.is_empty() {
+        if size >= buf.len() {
             return Err(DecodeError::Wire(bcp_wire::WireError::UnexpectedEof {
                 offset: size,
             }));
         }
-        let (_, len_size) = bcp_wire::varint::decode_varint(flags_and_len)?;
+        size += 1;
+
+        // content_len varint (should be 0)
+        let rest = buf.get(size..).ok_or(DecodeError::Wire(
+            bcp_wire::WireError::UnexpectedEof { offset: size },
+        ))?;
+        if rest.is_empty() {
+            return Err(DecodeError::Wire(bcp_wire::WireError::UnexpectedEof {
+                offset: size,
+            }));
+        }
+        let (_, len_size) = bcp_wire::varint::decode_varint(rest)?;
         size += len_size;
 
         Ok(size)
