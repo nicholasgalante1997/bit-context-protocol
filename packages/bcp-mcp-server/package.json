@@ -1,0 +1,19 @@
+{
+  "name": "bcp-mcp-server",
+  "version": "0.1.0",
+  "type": "module",
+  "private": true,
+  "scripts": {
+    "start": "bun run src/index.ts",
+    "start:http": "bun run src/index.ts --transport http",
+    "typecheck": "bun run tsc --noEmit",
+    "test": "bun test"
+  },
+  "dependencies": {
+    "debug": "^4.4.3",
+    "supports-color": "^10.2.2"
+  },
+  "devDependencies": {
+    "@types/debug": "^4.1.12"
+  }
+}

@@ -2,4 +2,5 @@
 /.vscode
 /models
 /node_modules
+/packages/**/node_modules
 /target

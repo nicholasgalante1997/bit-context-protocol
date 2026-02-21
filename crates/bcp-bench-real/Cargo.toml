@@ -1,0 +1,34 @@
+[package]
+name = "bcp-bench-real"
+version = "0.1.0"
+edition = "2024"
+publish = false
+
+# Real-world token benchmark harness for BCP.
+# Measures actual BPE token savings using tiktoken-rs (cl100k_base)
+# against realistic markdown baselines.
+
+[[bin]]
+name = "bench_tokens"
+path = "src/bin/bench_tokens.rs"
+
+[[bin]]
+name = "capture_session"
+path = "src/bin/capture_session.rs"
+
+[[bench]]
+name = "tiktoken"
+harness = false
+
+[dependencies]
+bcp-encoder = { path = "../bcp-encoder" }
+bcp-decoder = { path = "../bcp-decoder" }
+bcp-driver  = { path = "../bcp-driver" }
+bcp-types   = { path = "../bcp-types" }
+bcp-wire    = { path = "../bcp-wire" }
+tiktoken-rs = "0.9.1"
+serde       = { version = "1", features = ["derive"] }
+serde_json  = { workspace = true }
+anyhow      = { workspace = true }
+clap        = { workspace = true }
+criterion   = { workspace = true }
