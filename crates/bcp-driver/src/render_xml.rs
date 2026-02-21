@@ -226,10 +226,10 @@ impl XmlRenderer {
 
             BlockContent::Image(img) => {
                 let media = media_type_display_name(img.media_type);
-                let content = content_to_string(&img.data, index)?;
                 Ok(format!(
-                    "<image type=\"{media}\" alt=\"{}\">\n{content}\n</image>",
-                    xml_escape(&img.alt_text)
+                    "<image type=\"{media}\" alt=\"{}\">[binary image data: {} bytes]</image>",
+                    xml_escape(&img.alt_text),
+                    img.data.len()
                 ))
             }
 

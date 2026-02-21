@@ -1,0 +1,15 @@
+{
+  "mcpServers": {
+    "bcp": {
+      "command": "bun",
+      "args": [
+        "run",
+        "/home/nicks-dgx/dev/.RFCs/bit-context-protocol/packages/bcp-mcp-server/src/index.ts"
+      ],
+      "env": {
+        "BCP_CLI_PATH": "/home/nicks-dgx/dev/.RFCs/bit-context-protocol/target/release/bcp",
+        "BCP_LOG_LEVEL": "warn"
+      }
+    }
+  }
+}
