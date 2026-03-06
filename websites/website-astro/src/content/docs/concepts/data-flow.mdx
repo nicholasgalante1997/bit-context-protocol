@@ -1,0 +1,125 @@
+---
+title: "Data Flow"
+description: "End-to-end encode-decode-render pipeline of the Bit Context Protocol, from raw context to model-ready text."
+---
+
+import { Steps } from '@astrojs/starlight/components';
+
+## Pipeline Overview
+
+BCP transforms structured context through a linear pipeline: sources are encoded into a compact binary, decoded back into typed blocks, and rendered into token-efficient text for an LLM.
+
+![BCP data flow pipeline](../../../assets/images/data-flow.svg)
+
+## Programmatic Pipeline
+
+The Rust API pipeline flows through three crates in sequence.
+
+<Steps>
+
+1. **Produce context (Tool/Agent)**
+
+   Your application, agent framework, or MCP tool produces structured context: source code, conversation turns, tool results, file trees, and other semantic data. This is the raw input to the pipeline.
+
+2. **Encode (BcpEncoder)**
+
+   The `BcpEncoder` builder API accepts typed blocks and serializes them into a `.bcp` binary payload. Each block is encoded using TLV (Tag-Length-Value) field encoding inside a block frame envelope. Optional zstd compression and BLAKE3 content addressing are applied at this stage.
+
+   ```rust
+   let payload = BcpEncoder::new()
+       .add_code(Lang::Rust, "src/main.rs", b"fn main() {}")
+       .add_conversation(Role::User, b"Fix the timeout bug.")
+       .encode()?;
+   ```
+
+3. **Transport (.bcp binary)**
+
+   The encoded payload is a self-contained binary blob prefixed with the `BCP\0` magic header. It can be written to disk, sent over HTTP, stored in a database, or piped between processes. The format is stable and forward-compatible.
+
+4. **Decode (BcpDecoder)**
+
+   The `BcpDecoder` parses the binary payload back into a `Vec<Block>` of typed, structured blocks. The decoder supports both synchronous (full payload) and asynchronous (streaming) modes. Unknown block types are preserved as `BlockContent::Unknown` for forward compatibility.
+
+   ```rust
+   let decoded = BcpDecoder::decode(&payload)?;
+   ```
+
+5. **Render (BcpDriver)**
+
+   The `BcpDriver` converts decoded blocks into model-ready text in one of three output modes:
+
+   - **XML** -- Structured tags optimized for Claude-family models
+   - **Markdown** -- Universal format for any LLM
+   - **Minimal** -- Maximum token efficiency, minimal formatting
+
+   The driver's token budget engine can automatically summarize or omit low-priority blocks to fit within a target token count.
+
+   ```rust
+   let text = driver.render(&decoded.blocks, &config)?;
+   ```
+
+6. **Consume (LLM)**
+
+   The rendered text is injected into the model's context window. Because BCP eliminates redundant structural tokens (markdown fences, JSON envelopes, repeated prefixes), the same semantic content occupies fewer tokens, leaving more room for the model's actual work.
+
+</Steps>
+
+## CLI Pipeline
+
+The `bcp` CLI provides the same pipeline as shell commands, useful for scripting and inspection without writing Rust.
+
+<Steps>
+
+1. **Author a JSON manifest**
+
+   Define blocks in a JSON manifest file. Each entry specifies a block type and its fields.
+
+   ```json
+   {
+     "blocks": [
+       { "type": "code", "lang": "rust", "path": "src/lib.rs", "content": "pub fn add(a: i32, b: i32) -> i32 { a + b }" },
+       { "type": "conversation", "role": "user", "content": "Explain the add function." }
+     ]
+   }
+   ```
+
+2. **Encode to .bcp**
+
+   ```bash
+   bcp encode manifest.json -o payload.bcp
+   ```
+
+3. **Inspect or validate**
+
+   ```bash
+   bcp inspect payload.bcp --show-body
+   bcp validate payload.bcp
+   ```
+
+4. **Decode and render**
+
+   ```bash
+   bcp decode payload.bcp --mode xml
+   bcp decode payload.bcp --mode minimal --budget 2000
+   ```
+
+5. **Analyze statistics**
+
+   ```bash
+   bcp stats payload.bcp
+   ```
+
+</Steps>
+
+## Stage Responsibilities
+
+| Stage | Crate | Input | Output |
+|-------|-------|-------|--------|
+| Encode | `bcp-encoder` | Typed block data | `.bcp` binary payload |
+| Transport | -- | Binary bytes | Binary bytes |
+| Decode | `bcp-decoder` | `.bcp` binary payload | `Vec<Block>` |
+| Render | `bcp-driver` | `Vec<Block>` + config | Model-ready text (XML/MD/Minimal) |
+
+:::tip
+The encode and decode stages are symmetric: any payload produced by `BcpEncoder` can be decoded by `BcpDecoder` with no data loss. Roundtrip fidelity is verified by the `bcp-tests` crate across all 11 block types.
+:::

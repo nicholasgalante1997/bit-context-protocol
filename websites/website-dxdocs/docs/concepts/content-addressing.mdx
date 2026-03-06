@@ -1,0 +1,111 @@
+---
+title: "Content Addressing"
+description: "How BCP uses BLAKE3 hashing to deduplicate identical blocks via content-addressed references."
+---
+
+BCP supports content-addressed deduplication using [BLAKE3](https://github.com/BLAKE3-team/BLAKE3) hashing. When multiple blocks contain identical content, only the first copy is stored inline. Subsequent duplicates are replaced with a compact 32-byte hash reference, dramatically reducing payload size in contexts with repeated content.
+
+
+<Callout variant="info">
+  BLAKE3 is a cryptographic hash function designed for speed. It's faster than SHA-256 while providing equivalent security.
+
+</Callout>
+
+## How It Works
+
+When the `IS_REFERENCE` flag (bit 2) is set on a block's `BlockFlags`, the block body contains a **32-byte BLAKE3 hash** instead of inline data. The hash points to a content store where the original data is held.
+
+The flow is:
+
+1. The encoder hashes the block body with BLAKE3.
+2. If the hash already exists in the content store, the block body is replaced with the 32-byte hash and the `IS_REFERENCE` flag is set.
+3. If the hash is new, the full body is stored in the content store and written inline.
+
+## ContentStore Trait
+
+Content addressing is built on the `ContentStore` trait:
+
+```rust
+pub trait ContentStore: Send + Sync {
+    fn get(&self, hash: &[u8; 32]) -> Option<Vec<u8>>;
+    fn put(&self, content: &[u8]) -> [u8; 32];
+    fn contains(&self, hash: &[u8; 32]) -> bool;
+}
+```
+
+BCP ships with `MemoryContentStore`, an in-memory `HashMap`-backed implementation suitable for single-payload workflows. For persistent deduplication across payloads, implement `ContentStore` against your own storage backend.
+
+## Encoder API
+
+### Manual Content Addressing
+
+Call `.with_content_addressing()` after adding each block to opt it into deduplication:
+
+```rust
+use std::sync::Arc;
+use bcp_encoder::BcpEncoder;
+use bcp_types::enums::Lang;
+use bcp_encoder::MemoryContentStore;
+
+let store = Arc::new(MemoryContentStore::new());
+let content = std::fs::read_to_string("shared/utils.rs")?;
+
+let payload = BcpEncoder::new()
+    .set_content_store(store.clone())
+    .add_code(Lang::Rust, "a.rs", content.as_bytes())
+    .with_content_addressing()?
+    .add_code(Lang::Rust, "b.rs", content.as_bytes())  // same content
+    .with_content_addressing()?  // second block becomes a 32-byte reference
+    .encode()?;
+```
+
+In this example, the second `add_code` call produces a block whose body is only 32 bytes (the BLAKE3 hash) instead of the full file content.
+
+### Auto-Dedup Mode
+
+For convenience, `.auto_dedup()` hashes every block automatically and deduplicates without requiring per-block `.with_content_addressing()` calls:
+
+```rust
+let store = Arc::new(MemoryContentStore::new());
+
+let payload = BcpEncoder::new()
+    .set_content_store(store.clone())
+    .auto_dedup()
+    .add_code(Lang::Rust, "a.rs", content.as_bytes())
+    .add_code(Lang::Rust, "b.rs", content.as_bytes())
+    .add_code(Lang::Rust, "c.rs", content.as_bytes())
+    .encode()?;
+// Only the first block stores inline data; b.rs and c.rs are 32-byte references
+```
+
+## Decoder Behavior
+
+### With Content Store
+
+Pass the same content store to the decoder to resolve references back to their original data:
+
+```rust
+use bcp_decoder::BcpDecoder;
+
+let decoded = BcpDecoder::decode_with_store(&payload, store.as_ref())?;
+// All blocks contain their full content — references are resolved transparently
+```
+
+### Without Content Store
+
+Calling `decode()` without a store leaves reference blocks unresolved. Their body will contain the raw 32-byte BLAKE3 hash, and the `IS_REFERENCE` flag remains set. This is useful for inspection tools that need to see the reference structure without resolving it.
+
+```rust
+let decoded = BcpDecoder::decode(&payload)?;
+// Reference blocks retain their 32-byte hash bodies
+```
+
+## When to Use Content Addressing
+
+Content addressing is most effective when:
+
+- Multiple code files share identical content (vendored copies, generated code).
+- Conversation histories repeat system prompts across turns.
+- Agent workflows re-attach the same tool output to multiple requests.
+
+For payloads where every block is unique, content addressing adds a small overhead (BLAKE3 computation + store lookup) with no size benefit.

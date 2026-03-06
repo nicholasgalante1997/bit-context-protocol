@@ -1,0 +1,142 @@
+---
+title: "Encoding"
+description: "Build BCP payloads with the BcpEncoder builder API."
+---
+
+The `bcp-encoder` crate provides a builder-pattern API for constructing BCP binary payloads. Tools, agents, and MCP servers use this to produce `.bcp` files without understanding the wire format details.
+
+## Basic Encoding
+
+```rust
+use bcp_encoder::BcpEncoder;
+use bcp_types::enums::{Lang, Role, Status, Priority};
+
+let payload = BcpEncoder::new()
+    .add_code(Lang::Rust, "src/main.rs", content.as_bytes())
+    .with_summary("Entry point: CLI setup and server startup.")?
+    .with_priority(Priority::High)?
+    .add_conversation(Role::User, b"Fix the timeout bug.")
+    .add_conversation(Role::Assistant, b"I'll examine the pool config...")
+    .add_tool_result("ripgrep", Status::Ok, b"3 matches found.")
+    .encode()?;
+// payload is a Vec<u8> ready for storage or transmission
+```
+
+## Block Addition Methods
+
+All methods return `&mut Self` for chaining. Each appends a block to the internal list.
+
+| Method | Block Type | Key Parameters |
+|--------|-----------|----------------|
+| `add_code` | CODE | `lang`, `path`, `content` |
+| `add_code_range` | CODE | + `line_start`, `line_end` |
+| `add_conversation` | CONVERSATION | `role`, `content` |
+| `add_conversation_tool` | CONVERSATION | + `tool_call_id` |
+| `add_file_tree` | FILE_TREE | `root`, `entries: Vec<FileEntry>` |
+| `add_tool_result` | TOOL_RESULT | `name`, `status`, `content` |
+| `add_document` | DOCUMENT | `title`, `content`, `format_hint` |
+| `add_structured_data` | STRUCTURED_DATA | `format`, `content` |
+| `add_diff` | DIFF | `path`, `hunks: Vec<DiffHunk>` |
+| `add_annotation` | ANNOTATION | `target_block_id`, `kind`, `value` |
+| `add_embedding_ref` | EMBEDDING_REF | `vector_id`, `source_hash`, `model` |
+| `add_image` | IMAGE | `media_type`, `alt_text`, `data` |
+| `add_extension` | EXTENSION | `namespace`, `type_name`, `content` |
+
+## Modifier Methods
+
+Modifiers act on the **most recently added block**:
+
+```rust
+// Attach a summary to the last block
+// Sets HAS_SUMMARY flag, prepends summary to body during serialization
+encoder.with_summary("Entry point: CLI setup.")?;
+
+// Attach a priority annotation to the last block
+// Appends a separate ANNOTATION block targeting the previous block
+encoder.with_priority(Priority::High)?;
+```
+
+<Note>
+  `with_priority` does not modify the target block. It appends a separate ANNOTATION block with `kind=Priority` and `value=[priority.to_wire_byte()]`.
+</Note>
+
+## With Compression
+
+<Tabs>
+  <Tab title="Per-block">
+    ```rust
+    // Compress individual large blocks (>= 256 bytes)
+    let payload = BcpEncoder::new()
+        .add_code(Lang::Rust, "lib.rs", large_file.as_bytes())
+        .with_compression()
+        .encode()?;
+    ```
+  </Tab>
+  <Tab title="Whole-payload">
+    ```rust
+    // Compress everything after the header
+    let payload = BcpEncoder::new()
+        .add_code(Lang::Rust, "a.rs", file_a.as_bytes())
+        .add_code(Lang::Rust, "b.rs", file_b.as_bytes())
+        .compress_payload()
+        .encode()?;
+    ```
+  </Tab>
+</Tabs>
+
+## With Content Addressing
+
+Deduplicate identical blocks using BLAKE3 hashing:
+
+```rust
+use std::sync::Arc;
+use bcp_encoder::{BcpEncoder, MemoryContentStore};
+use bcp_types::enums::Lang;
+
+let store = Arc::new(MemoryContentStore::new());
+
+let payload = BcpEncoder::new()
+    .set_content_store(store.clone())
+    .add_code(Lang::Rust, "a.rs", content.as_bytes())
+    .with_content_addressing()?
+    .add_code(Lang::Rust, "b.rs", content.as_bytes())  // same content
+    .with_content_addressing()?  // becomes a 32-byte reference
+    .encode()?;
+```
+
+Or use automatic deduplication:
+
+```rust
+let payload = BcpEncoder::new()
+    .set_content_store(store.clone())
+    .auto_dedup()
+    .add_code(Lang::Rust, "a.rs", content.as_bytes())
+    .add_code(Lang::Rust, "b.rs", content.as_bytes())
+    .encode()?;
+```
+
+## Output Layout
+
+The `encode()` method produces:
+
+```
+[8 bytes]    File header (magic, version, flags, reserved)
+[N bytes]    Block 0 frame (type + flags + len + body)
+[N bytes]    Block 1 frame ...
+...
+[2-4 bytes]  END sentinel (type=0xFF, flags=0x00, len=0)
+```
+
+## Error Types
+
+```rust
+pub enum EncodeError {
+    EmptyPayload,                              // No blocks added
+    BlockTooLarge { size: usize, limit: usize }, // Body > 16 MiB
+    NoBlockTarget { method: &'static str },    // Modifier with no preceding block
+    MissingContentStore,                       // Content addressing without store
+    Compression(CompressionError),             // From zstd
+    Wire(WireError),                           // From bcp-wire
+    Io(std::io::Error),                        // I/O failure
+}
+```

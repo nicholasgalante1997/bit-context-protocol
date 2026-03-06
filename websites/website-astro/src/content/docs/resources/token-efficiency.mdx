@@ -1,0 +1,117 @@
+---
+title: "Token Efficiency"
+description: "Analysis of BCP's token savings compared to raw markdown for common context patterns."
+---
+
+## Structural Overhead Comparison
+
+The following table compares token overhead for common context patterns between raw markdown and BCP's minimal decode mode. Estimates are based on the `cl100k_base` tokenizer.
+
+:::note[Info]
+These are preliminary estimates for **structural overhead only**. Actual content tokens (the code itself, the conversation text, etc.) are unchanged between markdown and BCP. The savings shown here represent tokens consumed by formatting delimiters, headers, fences, and envelopes -- not by the semantic content.
+:::
+
+| Context Pattern | Markdown Overhead | BCP Minimal Overhead | Savings |
+|------------------|-------------------|-------------- ----|--- -----|
+| Code block (50-line Rust) | ~18 tokens | ~6 tokens | ~67% |
+| Conversation turn | ~8 tokens | ~3 tokens | ~63% |
+| File tree (20 entries) | ~60 tokens total | ~35 tokens total | ~42% |
+| Tool result w/ JSON envelope | ~40 tokens | ~8 tokens | ~80% |
+| 10 files, shared prefix | ~50 path tokens | ~15 path tokens | ~70% |
+
+---
+
+## Where the Overhead Comes From
+
+### Code Blocks
+
+In raw markdown, a code block requires:
+- Opening fence: ` ```rust ` (~3 tokens)
+- File path comment or header: `// src/lib.rs` (~4 tokens)
+- Language identifier in the fence (~1 token)
+- Closing fence: ` ``` ` (~3 tokens)
+- Surrounding newlines and spacing (~7 tokens)
+
+In BCP minimal mode, a code block emits a single-line marker like `--- src/lib.rs [rust] ---` (~6 tokens), then the raw content. No closing delimiter is needed because the next block's marker serves as the boundary.
+
+### Conversation Turns
+
+In raw markdown, a conversation turn typically includes:
+- Role header: `### User:` or `### Assistant:` (~4-5 tokens)
+- Blank lines before and after (~3 tokens)
+
+In BCP minimal mode, a turn emits a compact marker like `[user]` (~2-3 tokens).
+
+### Tool Results
+
+This is where BCP achieves the largest savings. MCP-style tool results include:
+- JSON-RPC envelope fields (`jsonrpc`, `id`, `method`) (~12 tokens)
+- Nested `result` / `content` object structure (~8 tokens)
+- Content type indicators (~5 tokens)
+- String escaping overhead for embedded content (~15 tokens)
+
+BCP encodes the tool name, status enum, and raw content bytes with no envelope overhead. The minimal mode output is just `[tool: ripgrep, ok]` followed by the content.
+
+### Shared Path Prefixes
+
+In a typical agent context with 10 files from the same project, raw markdown repeats the full path for each file:
+
+```
+src/services/database/connection.rs
+src/services/database/pool.rs
+src/services/database/retry.rs
+```
+
+BCP can deduplicate common prefixes at the path encoding level, reducing repeated path segments to back-references.
+
+---
+
+## Compound Savings
+
+The savings from individual patterns compound significantly in real-world agent contexts.
+
+Consider a typical 100K-token agent context window:
+
+| Component | Token Count | Structural Overhead |
+|------ ------|-- -----------|----- --------------|
+| 15 source files with code fences | ~60,000 | ~270 tokens (fences + headers) |
+| 20 conversation turns | ~15,000 | ~160 tokens (role headers + spacing) |
+| 8 tool results with JSON envelopes | ~10,000 | ~320 tokens (envelopes) |
+| File tree listings | ~5,000 | ~300 tokens (formatting) |
+| System prompts, repeated prefixes | ~10,000 | ~3,000 tokens (duplication) |
+| **Total structural overhead** | | **~4,050 tokens (conservative)** |
+
+With more aggressive accounting that includes duplicated content across turns, repeated system prompts, and verbose JSON formatting, the structural overhead in a real agent context reaches **15,000-25,000 tokens** -- equivalent to the content of 3-5 additional source files.
+
+:::note[Info]
+Recovering 15,000-25,000 tokens means the model can see 3-5 more source files, or maintain 3-5 more conversation turns in context, without hitting the window limit. In debugging scenarios where every relevant file matters, this can be the difference between finding the bug and missing critical context.
+:::
+
+---
+
+## Output Mode Comparison
+
+BCP supports three decode modes, each with different token efficiency characteristics:
+
+| Mode | Target | Overhead Level | Best For |
+|------|--------|---------- ------|------ ----|
+| XML-tagged | Claude-family models | Low | Models with strong XML comprehension |
+| Markdown | All models | Medium | Maximum compatibility |
+| Minimal | Models that handle sparse formatting | Lowest | Maximum token efficiency |
+
+The **Minimal** mode achieves the savings shown in the table above. **XML-tagged** mode adds slightly more overhead (XML tags instead of minimal delimiters) but provides semantic structure that Claude-family models leverage for better comprehension. **Markdown** mode uses conventional fenced code blocks and headers, offering the least token savings but the broadest model compatibility.
+
+---
+
+## Methodology
+
+Token counts in this analysis are estimated using the `cl100k_base` tokenizer (used by GPT-4 and similar models). The BCP reference implementation includes Criterion benchmarks in the `bcp-tests` crate that measure encode/decode throughput and token savings for representative payloads.
+
+To reproduce these measurements:
+
+```bash
+cd crates/bcp-tests
+cargo bench
+```
+
+The benchmarks encode representative context payloads (source files, conversation histories, tool results) and compare the token count of the BCP decoded output against equivalent raw markdown.

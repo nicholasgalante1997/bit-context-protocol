@@ -1,0 +1,148 @@
+---
+title: "CLI Reference"
+description: "Inspect, validate, encode, decode, and analyze .bcp files from the command line."
+---
+
+The `bcp` binary provides five commands for working with `.bcp` files without writing Rust. Every command maps directly to a library API.
+
+```
+JSON manifest ──▶ bcp encode ──▶ .bcp file ──▶ bcp validate / inspect / decode / stats
+```
+
+## bcp inspect
+
+Print a human-readable block summary.
+
+```bash
+bcp inspect <FILE> [--show-body] [--show-hex] [--block N]
+```
+
+| Flag | Effect |
+|------|--------|
+| `--show-body` | Include first 80 chars of block content (UTF-8 lossy) |
+| `--show-hex` | Include 16-byte-per-line hex dump of block body |
+| `--block N` | Show only the block at zero-based index N |
+
+**Example output:**
+
+```text
+Header: BCP v1.0, flags=0x00, 6 blocks
+Block 0: CODE [rust] path="src/main.rs" (32 bytes)
+         Summary: "Entry point"
+         Body:    fn main() { println!("hello"); }
+Block 1: CONVERSATION [user] (20 bytes)
+Block 2: ANNOTATION target=1 kind=priority value="high" (1 bytes)
+Block 3: TOOL_RESULT [ripgrep] status=ok (32 bytes)
+Block 4: DOCUMENT title="API Reference" (38 bytes)
+         Summary: "API docs"
+Block 5: STRUCTURED_DATA format=json (29 bytes)
+---
+END sentinel at offset 278
+```
+
+## bcp validate
+
+Check structural correctness. Exits 0 on success, 1 on failure.
+
+```bash
+bcp validate <FILE>
+```
+
+**Success:**
+```text
+✓ Header: valid (BCP v1.0)
+✓ Blocks: 6 blocks parsed successfully
+✓ Sentinel: END block present
+✓ Integrity: all block bodies parse without error
+```
+
+**Failure:**
+```text
+✗ Error: invalid header — invalid magic number: expected 0x42435000, got 0xDEADBEEF
+```
+
+Validation covers all four structural layers: header (magic, version, reserved), decompression, block frames, and block body TLV deserialization.
+
+## bcp encode
+
+Create a BCP file from a JSON manifest.
+
+```bash
+bcp encode <MANIFEST> -o <OUTPUT> [--compress-blocks] [--compress-payload] [--dedup]
+```
+
+| Flag | Effect |
+|------|--------|
+| `--compress-blocks` | zstd-compress each block body individually |
+| `--compress-payload` | zstd-compress all blocks as one stream |
+| `--dedup` | BLAKE3 dedup via in-memory content store |
+
+<Callout variant="tip">
+  See [Manifest Format](/guides/manifest-format) for the full JSON schema.
+</Callout>
+
+## bcp decode
+
+Render a BCP file as model-ready text.
+
+```bash
+bcp decode <FILE> [--mode xml|markdown|minimal] [--verbosity full|summary|adaptive]
+                  [--budget N] [--include types] [-o <FILE>]
+```
+
+| Flag | Values / Default |
+|------|------------------|
+| `--mode` | `xml` (default), `markdown`, `minimal` |
+| `--verbosity` | `full`, `summary`, `adaptive` (default) |
+| `--budget` | Approximate token count (none = no limit) |
+| `--include` | Comma-separated block types to render |
+| `-o` | Write to file instead of stdout |
+
+**Examples:**
+
+```bash
+# Render all blocks as XML
+bcp decode context.bcp --mode xml
+
+# Only code and conversations, minimal mode
+bcp decode context.bcp --include code,conversation --mode minimal
+
+# Budget-constrained adaptive rendering
+bcp decode context.bcp --mode xml --budget 2000 --verbosity adaptive
+```
+
+## bcp stats
+
+Print size and token-efficiency statistics.
+
+```bash
+bcp stats <FILE>
+```
+
+**Example output:**
+
+```text
+File:    context.bcp  (282 bytes)
+Header:  BCP v1.0, flags=0x00 (uncompressed)
+Blocks:  6 total
+
+Type                 Count   Bytes
+────────────────────────────────────
+CODE                     1      32
+CONVERSATION             1      20
+ANNOTATION               1       1
+TOOL_RESULT              1      32
+DOCUMENT                 1      38
+STRUCTURED_DATA          1      29
+────────────────────────────────────
+Total                    6     152
+
+Tokens (heuristic estimate):
+  xml mode      ~93 tokens
+  markdown mode ~68 tokens
+  minimal mode  ~64 tokens
+```
+
+<Callout variant="info">
+  Token estimates use `HeuristicEstimator` (4 chars per token). Actual tokenization varies by model.
+</Callout>

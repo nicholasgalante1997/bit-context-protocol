@@ -1,0 +1,154 @@
+# configs/generation.yaml
+#
+# Configuration for the synthetic data generation pipeline.
+# This file controls which repos to clone, what files to extract,
+# how many examples to generate, and which model to use.
+
+# --- Source Repositories ---
+# These repos provide real code for training data.
+# The pipeline clones them, extracts source files, and uses those
+# files as context in the training examples.
+source_repos:
+
+  # Rust projects
+  - url: "https://github.com/BurntSushi/ripgrep"
+    languages: ["rust"]
+    max_files: 20
+    description: "Fast regex search tool — good for CLI patterns, file I/O"
+
+  - url: "https://github.com/sharkdp/hyperfine"
+    languages: ["rust"]
+    max_files: 15
+    description: "CLI benchmarking tool — command-line arg parsing, statistics"
+
+  - url: "https://github.com/Schniz/fnm"
+    languages: ["rust"]
+    max_files: 15
+    description: "Fast Node.js version manager — async I/O, platform abstractions"
+
+  # TypeScript projects
+  - url: "https://github.com/colinhacks/zod"
+    languages: ["typescript"]
+    max_files: 15
+    description: "Schema validation library — complex type system, generics"
+
+  - url: "https://github.com/facebook/react"
+    languages: ["typescript", "javascript"]
+    max_files: 20
+    description: "UI framework — component patterns, hooks, reconciler internals"
+
+  - url: "https://github.com/nodejs/undici"
+    languages: ["typescript", "javascript"]
+    max_files: 15
+    description: "HTTP client — networking, streams, protocol implementation"
+
+  # Python projects
+  - url: "https://github.com/tiangolo/fastapi"
+    languages: ["python"]
+    max_files: 15
+    description: "Web framework — dependency injection, OpenAPI, async handlers"
+
+  - url: "https://github.com/pydantic/pydantic"
+    languages: ["python"]
+    max_files: 15
+    description: "Data validation — complex types, serialization, metaclasses"
+
+  # Go projects
+  - url: "https://github.com/junegunn/fzf"
+    languages: ["go"]
+    max_files: 15
+    description: "Fuzzy finder — TUI rendering, algorithm implementation"
+
+  - url: "https://github.com/containerd/nerdctl"
+    languages: ["go"]
+    max_files: 15
+    description: "Container CLI — Docker-compatible, complex CLI patterns"
+
+  - url: "https://github.com/charmbracelet/bubbletea"
+    languages: ["go"]
+    max_files: 15
+    description: "TUI framework — Elm architecture in Go, event handling"
+
+  # BCP's own codebase
+  - url: "https://github.com/nicholasgalante1997/bit-context-protocol"
+    languages: ["rust"]
+    max_files: 20
+    description: "BCP reference implementation — our own codebase"
+
+# --- File Selection Filters ---
+file_selection:
+  min_lines: 20
+  max_lines: 500
+  skip_patterns:
+    - "**/test*"
+    - "**/vendor/**"
+    - "**/*.generated.*"
+    - "**/node_modules/**"
+    - "**/target/**"
+    - "**/.git/**"
+
+# --- Task Generation ---
+task_generation:
+  target_count: 1500
+  split:
+    train: 0.8
+    val: 0.1
+    test: 0.1
+
+  task_types:
+    - type: "code_review"
+      weight: 0.25
+      description: "Ask the model to review code for bugs and improvements"
+      prompt_template: |
+        Review the following code and identify any bugs, performance issues,
+        or improvements. Be specific about line numbers and provide fixes.
+
+    - type: "explain_function"
+      weight: 0.20
+      description: "Ask the model to explain what code does"
+      prompt_template: |
+        Explain what this code does. Describe the algorithm, key data
+        structures, and any edge cases it handles.
+
+    - type: "bug_fix"
+      weight: 0.20
+      description: "Ask the model to find and fix a bug"
+      prompt_template: |
+        The following code has a bug. Identify the bug and provide a
+        corrected version with an explanation of what was wrong.
+
+    - type: "add_feature"
+      weight: 0.15
+      description: "Ask the model to add error handling or a small feature"
+      prompt_template: |
+        Add error handling to this code. The function should return
+        descriptive errors instead of panicking or silently failing.
+
+    - type: "tool_result_interpretation"
+      weight: 0.20
+      description: "Ask the model to interpret tool output (search, tests, lints)"
+      prompt_template: |
+        Given the tool output below, explain what was found and suggest
+        next steps. The tool output includes search results, diagnostics,
+        or test output.
+
+# --- Model Configuration ---
+model:
+  provider: "ollama"
+  name: "qwen2.5-coder:32b"
+  base_url: "http://localhost:11434/v1"
+  max_tokens: 1024
+  temperature: 0.3
+  system_prompt: |
+    You are an expert software engineer. Provide clear, accurate, and
+    actionable responses to coding tasks. When reviewing code, cite
+    specific line numbers. When fixing bugs, explain the root cause.
+    When explaining code, be concise but thorough.
+
+# --- Judge Model Configuration ---
+judge_model:
+  provider: "ollama"
+  name: "devstral-2:123b"
+  base_url: "http://localhost:11434/v1"
+  max_tokens: 16
+  temperature: 0.0

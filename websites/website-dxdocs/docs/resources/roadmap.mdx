@@ -1,0 +1,64 @@
+---
+title: "Roadmap"
+description: "BCP implementation phases and current project status."
+---
+
+## Phase 1: Specification and Reference Implementation
+
+
+<Callout variant="info">
+Phase 1 is **complete**. All deliverables have been implemented and tested. 310 tests pass across the workspace.
+
+</Callout>
+
+| Deliverable | Status | Details |
+|-------------|--------|---------|
+| v1 wire format specification | Done | Implemented in `bcp-wire` crate: LEB128 varints, 8-byte file header, block frame envelope. |
+| Reference encoder/decoder in Rust | Done | Workspace of 7 crates: `bcp-wire`, `bcp-types`, `bcp-encoder`, `bcp-decoder`, `bcp-driver`, `bcp-cli`, `bcp-tests`. |
+| Test suite with golden files | Done | `bcp-tests` crate: 11 golden `.bcp` fixtures with manifests, 27 insta snapshot tests, roundtrip and edge-case suites. |
+| Token efficiency benchmarks | Done | Criterion benchmarks in `bcp-tests` covering encode/decode throughput and token savings measurement. |
+| TypeScript bindings (bcp-ts) | Deferred | Originally scoped for Phase 1, moved to Phase 2. |
+
+The driver, CLI, and token budget engine were originally scoped for Phase 2 but were implemented during Phase 1 to validate the end-to-end pipeline.
+
+---
+
+## Phase 2: Driver and Tooling Integration
+
+Phase 2 focuses on making BCP accessible to tool and agent developers through integrations and language bindings.
+
+| Deliverable | Status | Details |
+|-------------|--------|---------|
+| Driver with XML/Markdown/Minimal output modes | Done | Completed early during Phase 1. Three render modes with model-family-aware formatting. |
+| CLI tool for inspecting, validating, converting BCP files | Done | Completed early during Phase 1. Commands: `inspect`, `validate`, `encode`, `decode`, `stats`. |
+| MCP server adapter | Done | TypeScript MCP server (`bcp-mcp-server`) exposing read, inspect, and encode tools over stdio and HTTP transports. |
+| TypeScript bindings (bcp-ts) | Planned | Targeting Bun runtime. Will provide encode/decode/render APIs for TypeScript/JavaScript consumers. |
+| VS Code extension | Planned | Visual inspector for `.bcp` payloads. Block-level view with syntax-highlighted content, metadata overlays, and size statistics. |
+
+---
+
+## Phase 3: Ecosystem and Native Path
+
+Phase 3 targets ecosystem adoption and the long-term vision of native binary ingestion by models.
+
+| Deliverable | Status | Details |
+|-------------|--------|---------|
+| BCP as MCP content-type | Planned | Propose BCP as an optional content-type in the MCP specification, enabling native BCP transport in MCP tool responses. |
+| Native ingestion experiments | Research | Collaborate with model providers on training binary token vocabularies that consume BCP blocks directly, eliminating the text decode step. |
+| Shared compression dictionaries | Planned | Pre-trained Zstd dictionaries optimized for common programming languages (Rust, TypeScript, Python, Go). |
+| Caching infrastructure | Planned | Content-addressed block store for caching and deduplicating BCP payloads across sessions and tools. |
+
+---
+
+## Crate Status Summary
+
+| Crate | Tests | Status |
+|-------|-------|--------|
+| `bcp-wire` | 30 | Complete |
+| `bcp-types` | 60 | Complete |
+| `bcp-encoder` | 52 | Complete |
+| `bcp-decoder` | 46 | Complete |
+| `bcp-driver` | 59 | Complete |
+| `bcp-cli` | -- | Complete |
+| `bcp-tests` | 58 | Complete |
+| **Total** | **310** | |

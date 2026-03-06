@@ -1,0 +1,17 @@
+[package]
+name = "bcp-wasm"
+version = "0.1.0"
+edition = "2024"
+
+[lib]
+crate-type = ["cdylib"]
+
+[dependencies]
+bcp-decoder = { path = "../bcp-decoder", default-features = false }
+bcp-driver  = { path = "../bcp-driver" }
+bcp-encoder = { path = "../bcp-encoder" }
+bcp-types   = { path = "../bcp-types" }
+wasm-bindgen = "0.2"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+zstd = { workspace = true, features = ["wasm"] }

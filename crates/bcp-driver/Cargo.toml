@@ -2,12 +2,18 @@
 name = "bcp-driver"
 version = "0.1.0"
 edition = "2024"
+description = "High-level driver for encoding and decoding Bit Context Protocol streams"
+license = "MIT"
+repository = "https://github.com/mega-blastoise/bit-context-protocol"
+homepage = "https://bitcontextprotocol.com"
+keywords = ["bcp", "context", "driver"]
+categories = ["encoding"]
 
 [dependencies]
-bcp-types = { path = "../bcp-types" }
-bcp-wire = { path = "../bcp-wire" }
+bcp-types = { path = "../bcp-types", version = "0.1.0" }
+bcp-wire = { path = "../bcp-wire", version = "0.1.0" }
 thiserror = { workspace = true }
 
 [dev-dependencies]
-bcp-encoder = { path = "../bcp-encoder" }
-bcp-decoder = { path = "../bcp-decoder" }
+bcp-encoder = { path = "../bcp-encoder", version = "0.1.0" }
+bcp-decoder = { path = "../bcp-decoder", version = "0.1.0" }

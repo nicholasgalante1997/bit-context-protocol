@@ -172,10 +172,10 @@ impl MinimalRenderer {
 
             BlockContent::Image(img) => {
                 let media = media_type_display_name(img.media_type);
-                let content = content_to_string(&img.data, index)?;
                 Ok(format!(
-                    "--- image [{media}]: {} ---\n{content}",
-                    img.alt_text
+                    "--- image [{media}]: {} ---\n[binary image data: {} bytes]",
+                    img.alt_text,
+                    img.data.len()
                 ))
             }
 

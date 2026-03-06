@@ -6,7 +6,8 @@
 //!
 //! - [`BcpDecoder`] — synchronous, operates on a complete `&[u8]` slice.
 //! - [`StreamingDecoder`] — asynchronous, reads from any `AsyncRead` source
-//!   and yields blocks incrementally.
+//!   and yields blocks incrementally. Requires the `streaming` feature (enabled
+//!   by default).
 //!
 //! **Compression and streaming**: The streaming decoder provides true
 //! incremental parsing for uncompressed and per-block-compressed payloads.
@@ -19,10 +20,12 @@
 pub mod block_reader;
 pub mod decoder;
 pub mod error;
+#[cfg(feature = "streaming")]
 pub mod streaming;
 
 mod decompression;
 
 pub use decoder::{DecodedPayload, BcpDecoder};
 pub use error::DecodeError;
+#[cfg(feature = "streaming")]
 pub use streaming::{DecoderEvent, StreamingDecoder};

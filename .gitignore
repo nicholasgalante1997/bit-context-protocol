@@ -2,4 +2,10 @@
 /.vscode
 /models
 /node_modules
+/packages/**/node_modules
 /target
+
+# BCP QLoRA experiment artifacts
+experiments/bcp-qlora/data/
+experiments/bcp-qlora/outputs/
+experiments/bcp-qlora/.venv/

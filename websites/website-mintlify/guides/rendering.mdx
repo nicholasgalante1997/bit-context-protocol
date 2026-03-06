@@ -1,0 +1,150 @@
+---
+title: "Rendering"
+description: "Convert decoded BCP blocks into model-ready text with XML, Markdown, and Minimal output modes."
+---
+
+The `bcp-driver` crate renders decoded `Vec<Block>` into model-ready text. It supports three output modes optimized for different model families and token budgets.
+
+## Basic Usage
+
+```rust
+use bcp_driver::{DefaultDriver, BcpDriver, DriverConfig, OutputMode, Verbosity};
+
+let driver = DefaultDriver;
+let config = DriverConfig {
+    mode: OutputMode::Xml,
+    verbosity: Verbosity::Adaptive,
+    token_budget: Some(8000),
+    ..Default::default()
+};
+let text = driver.render(&decoded.blocks, &config)?;
+```
+
+## Output Modes
+
+<AccordionGroup>
+  <Accordion title="XML Mode (Claude-optimized)">
+    Emits semantic XML elements wrapped in `<context>`. Optimized for Claude-family models with strong XML comprehension.
+
+    ```xml
+    <context>
+    <code lang="rust" path="src/main.rs">
+    fn main() {
+        let config = Config::load()?;
+    }
+    </code>
+
+    <tool name="ripgrep" status="ok">
+    3 matches for 'ConnectionPool' across 2 files.
+    </tool>
+
+    <turn role="user">Fix the connection timeout bug.</turn>
+    <turn role="assistant">I'll examine the pool config...</turn>
+    </context>
+    ```
+  </Accordion>
+  <Accordion title="Markdown Mode (universal)">
+    Conventional fenced code blocks and headers. Compatible with all models but uses more tokens for structural overhead.
+
+    ```text
+    ## src/main.rs
+
+    ~~~rust
+    fn main() {
+        let config = Config::load()?;
+    }
+    ~~~
+
+    ### Tool: ripgrep (ok)
+
+    3 matches for 'ConnectionPool' across 2 files.
+
+    **User**: Fix the connection timeout bug.
+
+    **Assistant**: I'll examine the pool config...
+    ```
+  </Accordion>
+  <Accordion title="Minimal Mode (max efficiency)">
+    Single-line delimiters for maximum token efficiency. Lowest overhead, best for budget-constrained contexts.
+
+    ```text
+    --- src/main.rs [rust] ---
+    fn main() {
+        let config = Config::load()?;
+    }
+
+    --- ripgrep [ok] ---
+    3 matches for 'ConnectionPool' across 2 files.
+
+    [user] Fix the connection timeout bug.
+    [assistant] I'll examine the pool config...
+    ```
+  </Accordion>
+</AccordionGroup>
+
+## Block Type Rendering Map
+
+Every block type maps to a specific element in each mode:
+
+| Block Type | XML | Markdown | Minimal |
+|------------|-----|----------|---------|
+| Code | `<code lang="X" path="Y">` | `## path` + fenced block | `--- path [lang] ---` |
+| Conversation | `<turn role="X">` | `**Role**: content` | `[role] content` |
+| FileTree | `<tree root="X">` | `### File Tree: root` | `--- tree: root ---` |
+| ToolResult | `<tool name="X" status="Y">` | `### Tool: name (status)` | `--- name [status] ---` |
+| Document | `<doc title="X">` | `### Document: title` | `--- title ---` |
+| StructuredData | `<data format="X">` | Fenced block with format | `--- data [format] ---` |
+| Diff | `<diff path="X">` | `### Diff: path` | `--- diff: path ---` |
+| EmbeddingRef | `<embed-ref model="X" />` | `*[Embedding ref: model]*` | `[embed-ref: model]` |
+| Image | `<image type="X" alt="Y">` | `### Image (type): alt` | `--- image [type]: alt ---` |
+| Extension | `<ext ns="X" type="Y">` | `### Extension: ns/type` | `--- ext: ns/type ---` |
+
+<Note>
+  Annotation and End blocks are never rendered — they are metadata-only and wire sentinels respectively.
+</Note>
+
+## Configuration
+
+```rust
+pub struct DriverConfig {
+    pub mode: OutputMode,                     // Xml | Markdown | Minimal
+    pub verbosity: Verbosity,                 // Full | Summary | Adaptive
+    pub token_budget: Option<u32>,            // Optional token limit
+    pub target_model: Option<ModelFamily>,    // Claude | Gpt | Qwen (hint)
+    pub include_types: Option<Vec<BlockType>>, // Optional type allowlist
+}
+```
+
+### Verbosity Modes
+
+| Mode | Behavior |
+|------|----------|
+| **Full** | Always render complete content, ignore summaries and budget |
+| **Summary** | Prefer summaries where available, fall back to full |
+| **Adaptive** | Use full for high-priority blocks, degrade based on budget |
+
+### Type Filtering
+
+Render only specific block types:
+
+```rust
+let config = DriverConfig {
+    mode: OutputMode::Minimal,
+    include_types: Some(vec![BlockType::Code, BlockType::Conversation]),
+    ..Default::default()
+};
+```
+
+## Summary Rendering
+
+When a block has a summary and the driver renders it in summary mode:
+
+| Mode | Output |
+|------|--------|
+| XML | `<code lang="rust" path="..." summary="true">{summary}</code>` |
+| Markdown | `## src/main.rs (summary)\n\n{summary}` |
+| Minimal | `--- src/main.rs [rust] (summary) ---\n{summary}` |
+
+<Tip>
+  See the [Token Budget Engine](/concepts/token-budget) for how the driver automatically degrades blocks to summaries when under budget pressure.
+</Tip>

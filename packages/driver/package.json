@@ -1,0 +1,73 @@
+{
+  "name": "@bit-context-protocol/driver",
+  "version": "0.1.0",
+  "description": "TypeScript driver for the Bit Context Protocol — encode, decode, and stream BCP data",
+  "type": "module",
+  "exports": {
+    ".": {
+      "bun": "./dist/bcp-driver.bun.js",
+      "types": "./dist/src/index.d.ts",
+      "import": "./dist/bcp-driver.js",
+      "default": "./dist/bcp-driver.js"
+    },
+    "./bun": {
+      "bun": "./dist/bcp-driver.bun.js",
+      "types": "./dist/src/index.d.ts",
+      "import": "./dist/bcp-driver.bun.js",
+      "default": "./dist/bcp-driver.bun.js"
+    }
+  },
+  "files": [
+    "bin",
+    "dist",
+    "wasm",
+    "CHANGELOG.md",
+    "LICENSE"
+  ],
+  "publishConfig": {
+    "access": "public",
+    "registry": "https://registry.npmjs.org/",
+    "tag": "latest"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/mega-blastoise/bit-context-protocol.git",
+    "directory": "packages/driver"
+  },
+  "homepage": "https://github.com/mega-blastoise/bit-context-protocol/tree/main/packages/driver",
+  "bugs": {
+    "url": "https://github.com/mega-blastoise/bit-context-protocol/issues"
+  },
+  "contributors": [
+    {
+      "email": "rustycloud42@protonmail.com",
+      "name": "Nick G.",
+      "url": "https://github.com/mega-blastoise"
+    }
+  ],
+  "engines": {
+    "bun": ">=1.3"
+  },
+  "scripts": {
+    "prebuild": "rm -rf dist",
+    "build:types": "tsc -p tsconfig.json",
+    "build:bundle": "bun build/index.ts",
+    "build": "bun run build:bundle && bun run build:types",
+    "typecheck": "tsc --noEmit",
+    "test": "bun test",
+    "clean": "rm -rf dist"
+  },
+  "dependencies": {},
+  "peerDependencies": {
+    "typescript": "^5.9.3"
+  },
+  "peerDependenciesMeta": {
+    "typescript": {
+      "optional": true
+    }
+  },
+  "devDependencies": {
+    "@types/bun": "^1.3.10",
+    "typescript": "^5.9.3"
+  }
+}

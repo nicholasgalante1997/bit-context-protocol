@@ -1,0 +1,134 @@
+---
+title: "FAQ"
+description: "Frequently asked questions about the Bit Context Protocol."
+---
+
+<details>
+  <summary>Why not just use Protocol Buffers?</summary>
+
+  Protocol Buffers are an excellent choice for machine-to-machine RPC, but they optimize for a fundamentally different target than BCP.
+
+  Protobuf schemas define arbitrary message types for service communication. BCP defines a fixed set of **semantic block types** (code, conversations, tool results, file trees) that capture the meaning of LLM context. This semantic awareness enables features that protobuf cannot provide:
+
+  - A **token budget engine** that knows how to summarize a CODE block differently from a CONVERSATION block.
+  - **Progressive detail** where blocks carry both a summary and full content, and the driver selects based on remaining budget.
+  - **Output mode rendering** optimized for specific model families (XML-tagged for Claude, minimal delimiters for maximum efficiency).
+
+  Protobuf could encode the same data, but you would need to build all of this semantic intelligence on top of it. BCP bakes it into the format and driver.
+</details>
+
+<details>
+  <summary>Why not just use MessagePack?</summary>
+
+  MessagePack is a compact binary JSON -- it serializes key-value data efficiently but carries no semantic type information. A code block serialized with MessagePack is indistinguishable from a conversation turn or a tool result at the format level.
+
+  BCP's value comes from **semantic typing**. Because the format knows that block `0x01` is source code with a language enum and file path, the driver can:
+
+  - Render it with the appropriate delimiters for the target model.
+  - Apply language-specific compression dictionaries.
+  - Deduplicate identical files across tool results using content addressing.
+  - Attach priority annotations that inform the token budget engine.
+
+  MessagePack gives you compact bytes. BCP gives you compact bytes with meaning.
+</details>
+
+<details>
+  <summary>What models does BCP support?</summary>
+
+  BCP works with any text-based LLM. The driver decodes BCP payloads into plain text, so the output is compatible with every model that accepts text input.
+
+  The driver supports three output modes to optimize for different model families:
+
+  - **XML-tagged mode** is optimized for Claude-family models, which have strong XML comprehension.
+  - **Markdown mode** produces conventional fenced code blocks and headers, compatible with all models.
+  - **Minimal mode** uses the most compact delimiters for maximum token efficiency.
+
+  The `target_model` field in `DriverConfig` allows the driver to select the best output mode automatically.
+</details>
+
+<details>
+  <summary>Is BCP production-ready?</summary>
+
+  **Phase 1 is complete.** The reference implementation includes:
+
+  - 7 Rust crates covering the full pipeline (wire primitives, types, encoder, decoder, driver, CLI, tests).
+  - **310 tests** passing across the workspace, including golden file conformance tests, roundtrip encode/decode suites, and edge-case coverage.
+  - Criterion benchmarks measuring encode/decode throughput and token efficiency.
+
+  However, the wire format specification is still a **draft (v0.1.0)** and is subject to revision. The format should be considered stable enough for experimentation and prototyping, but not yet for production systems that cannot tolerate breaking changes. A stable v1.0 release is planned once community feedback has been incorporated.
+</details>
+
+<details>
+  <summary>Does BCP support streaming?</summary>
+
+  Yes. The `bcp-decoder` crate provides a `StreamingDecoder` that processes blocks incrementally as bytes arrive, without buffering the entire payload in memory.
+
+  ```rust
+  let mut decoder = StreamingDecoder::new(reader);
+  while let Some(event) = decoder.next().await {
+      match event? {
+          DecoderEvent::Header(h) => { /* file header */ },
+          DecoderEvent::Block(b) => { /* process block */ },
+      }
+  }
+  ```
+
+  Each block is self-contained, so it can be decoded, rendered, and sent to the model as soon as it is received. This is particularly useful for large context payloads where latency matters.
+</details>
+
+<details>
+  <summary>Should block order be significant?</summary>
+
+  This is an **open question** from the RFC (Section 11.2).
+
+  Placing high-priority blocks first may improve model attention -- models tend to attend more strongly to content at the beginning and end of their context window. However, making block order significant imposes constraints on encoders and complicates streaming scenarios where blocks may arrive out of order.
+
+  The current implementation does not assign semantic meaning to block order. The token budget engine uses priority annotations (CRITICAL, HIGH, NORMAL, LOW, BACKGROUND) rather than positional ordering to determine which blocks to include in full.
+
+  Community input on this question is welcome.
+</details>
+
+<details>
+  <summary>Should blocks be nestable?</summary>
+
+  This is an **open question** from the RFC (Section 11.3).
+
+  Real-world context is often nested: a conversation turn may contain code blocks, a tool result may include a file tree. Supporting nested blocks would model this structure more faithfully. However, nesting adds complexity to the wire format, the decoder, and the driver's rendering logic.
+
+  The current v1 wire format uses a flat block sequence. Nesting can be approximated using ANNOTATION blocks that reference other blocks by ID, providing a lightweight alternative without complicating the core format.
+
+  This is an area where practical experience with the format will inform the decision.
+</details>
+
+<details>
+  <summary>Will there be a TypeScript SDK?</summary>
+
+  Yes. TypeScript bindings (`bcp-ts`) targeting the Bun runtime are planned for **Phase 2** of the roadmap. The SDK will provide encode, decode, and render APIs for TypeScript and JavaScript consumers.
+
+  TypeScript bindings were originally scoped for Phase 1 but were deferred to focus on completing the Rust reference implementation and validating the end-to-end pipeline.
+</details>
+
+<details>
+  <summary>Can models consume BCP binary directly?</summary>
+
+  Not today, but this is the long-term vision described in RFC Section 8.
+
+  The idea is that model providers could train binary token vocabularies that interpret BCP block structure directly, eliminating the text decode step entirely. A CODE block would be consumed as a structured token sequence rather than rendered to text and re-tokenized.
+
+  Several design decisions in the v1 wire format specifically enable this future: block types use small integer IDs (not strings), field IDs are varint-tagged (not named), and every block is self-contained for independent tokenization.
+
+  This requires significant research collaboration with model providers and is not expected in the near term.
+</details>
+
+<details>
+  <summary>How does compression work?</summary>
+
+  BCP uses **Zstandard (zstd)** compression at two levels:
+
+  - **Per-block compression:** Individual blocks can be compressed independently. This is indicated by bit 1 of the block's `block_flags` field. A 256-byte threshold prevents compression from being counterproductive on small blocks.
+  - **Whole-payload compression:** The entire payload (after the 8-byte header) can be compressed as a single unit. This is indicated by bit 0 of the file header's flags byte and typically achieves better compression ratios than per-block compression.
+
+  Zstd was chosen for its excellent compression-ratio-to-speed tradeoff and its support for dictionary-based compression. Dictionary compression is particularly effective for repetitive code context, where common language keywords and syntax patterns recur frequently. A future version of the specification may define shared dictionaries optimized for common programming languages.
+
+  The decoder includes decompression bomb protection to prevent malicious payloads from consuming excessive memory.
+</details>

@@ -1,0 +1,76 @@
+name: "[bcp-docs](Deploy - Mintlify)"
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - "websites/website-mintlify/**"
+  workflow_dispatch:
+
+env:
+  MINTLIFY_TOKEN: ${{ secrets.MINTLIFY_TOKEN }}
+
+jobs:
+  checkout:
+    name: Validate
+    runs-on: ubuntu-latest
+    if: false # Disable website publishing until weve sorted out the website stack
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+      - name: Setup Bun Runtime
+        uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: latest
+      - name: Check for broken links
+        run: cd ./websites/website-mintlify && bunx mintlify broken-links
+        continue-on-error: false
+
+  build:
+    name: Build
+    needs: checkout
+    runs-on: ubuntu-latest
+    if: false # Disable website publishing until weve sorted out the website stack
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+      - name: Setup Bun Runtime
+        uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: latest
+      - name: Build documentation site
+        run: cd ./websites/website-mintlify && bunx mintlify build
+
+  deploy:
+    name: Deploy
+    needs: build
+    runs-on: ubuntu-latest
+    if: false # Disable website publishing until weve sorted out the website stack
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+      - name: Setup Bun Runtime
+        uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: latest
+      - name: Deploy to Mintlify
+        run: cd website && bunx mintlify deploy --token ${{ env.MINTLIFY_TOKEN }}
+
+  summary:
+    name: Pipeline Summary
+    needs:
+      - deploy
+    runs-on: ubuntu-latest
+    if: false # always() # Disable website publishing until weve sorted out the website stack
+    steps:
+      - name: Print summary
+        run: |
+          echo "Pipeline Summary:"
+
+          if [[ "${{ needs.deploy.result }}" == "success" ]]; then
+            echo "All jobs succeeded!"
+          else
+            echo "One or more jobs failed."
+            exit 1
+          fi

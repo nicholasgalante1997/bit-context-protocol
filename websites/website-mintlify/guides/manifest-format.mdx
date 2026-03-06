@@ -1,0 +1,145 @@
+---
+title: "Manifest Format"
+description: "JSON manifest schema for creating .bcp files with bcp encode."
+---
+
+The `bcp encode` command reads a JSON manifest describing the blocks to include in a `.bcp` file. This page documents the manifest schema.
+
+## Basic Structure
+
+```json
+{
+  "blocks": [
+    {
+      "type": "code",
+      "lang": "rust",
+      "path": "src/main.rs",
+      "content": "fn main() { println!(\"hello\"); }",
+      "summary": "Entry point",
+      "priority": "high"
+    },
+    {
+      "type": "conversation",
+      "role": "user",
+      "content": "Fix the timeout bug."
+    },
+    {
+      "type": "tool_result",
+      "name": "ripgrep",
+      "status": "ok",
+      "content": "src/main.rs:5: let timeout = 30;"
+    }
+  ]
+}
+```
+
+## Supported Block Types
+
+| Type | Required Fields |
+|------|----------------|
+| `code` | `lang`, `path`, `content` (or `content_file`) |
+| `conversation` | `role`, `content` (or `content_file`) |
+| `tool_result` | `name`, `content` (or `content_file`) |
+| `document` | `title`, `content` (or `content_file`) |
+| `structured_data` | `format`, `content` (or `content_file`) |
+
+**Optional on any block**: `summary` (string), `priority` (`critical` | `high` | `normal` | `low` | `background`).
+
+## File References
+
+The `content_file` key substitutes `content` — the encoder reads the file at the given path relative to the manifest's parent directory:
+
+```json
+{
+  "type": "code",
+  "lang": "rust",
+  "path": "src/lib.rs",
+  "content_file": "src/lib.rs"
+}
+```
+
+This lets you ship a manifest alongside source files without embedding content inline.
+
+## Enum Values
+
+```
+lang:     rust | typescript | javascript | python | go | java | c | cpp |
+          ruby | shell | sql | html | css | json | yaml | toml | markdown
+
+role:     system | user | assistant | tool
+
+status:   ok | error | timeout  (default: ok)
+
+format:   markdown | plain | html  (document)
+          json | yaml | toml | csv  (structured_data)
+
+priority: critical | high | normal | low | background
+```
+
+## Full Example
+
+```json
+{
+  "blocks": [
+    {
+      "type": "code",
+      "lang": "rust",
+      "path": "src/main.rs",
+      "content_file": "src/main.rs",
+      "summary": "Entry point: CLI setup and server startup",
+      "priority": "high"
+    },
+    {
+      "type": "conversation",
+      "role": "user",
+      "content": "Fix the connection timeout bug."
+    },
+    {
+      "type": "conversation",
+      "role": "assistant",
+      "content": "I'll examine the pool config..."
+    },
+    {
+      "type": "tool_result",
+      "name": "ripgrep",
+      "status": "ok",
+      "content": "3 matches for 'ConnectionPool' across 2 files."
+    },
+    {
+      "type": "document",
+      "title": "API Reference",
+      "format": "markdown",
+      "content_file": "docs/api.md",
+      "summary": "REST API documentation"
+    },
+    {
+      "type": "structured_data",
+      "format": "json",
+      "content": "{\"key\": \"value\", \"count\": 42}"
+    }
+  ]
+}
+```
+
+## Encoding with Flags
+
+```bash
+# Basic encode
+bcp encode manifest.json -o output.bcp
+
+# With per-block compression
+bcp encode manifest.json -o output.bcp --compress-blocks
+
+# With whole-payload compression
+bcp encode manifest.json -o output.bcp --compress-payload
+
+# With content deduplication
+bcp encode manifest.json -o output.bcp --dedup
+
+# All features combined
+bcp encode manifest.json -o output.bcp --compress-blocks --dedup
+```
+
+<Warning>
+  `--compress-blocks` and `--compress-payload` are mutually exclusive approaches. Per-block compression preserves streaming decode capability; whole-payload compression may achieve better ratios but disables true streaming.
+</Warning>

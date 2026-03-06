@@ -1,0 +1,285 @@
+---
+title: "bcp-cli"
+description: "Developer CLI for the BCP stack: inspect, validate, encode, decode, and profile .bcp files from the command line."
+---
+
+The developer interface for the BCP stack. A five-command binary that lets you inspect, validate, encode, decode, and profile `.bcp` files without writing a single line of Rust.
+
+## Crate Info
+
+| Field | Value |
+|-------|-------|
+| Path | `crates/bcp-cli/` |
+| Binary | `bcp` |
+| Dependencies | `bcp-encoder`, `bcp-decoder`, `bcp-driver`, `bcp-types`, `clap`, `anyhow`, `serde`, `serde_json` |
+
+## Command Dispatch
+
+Every subcommand maps directly to a library API:
+
+| Command | Library API Used |
+|---------|-----------------|
+| `inspect` | `BcpDecoder::decode` -> print BlockContent variants |
+| `validate` | `BcpDecoder::decode` -> Ok / Err diagnostic |
+| `encode` | `BcpEncoder` builder -> `fs::write` |
+| `decode` | `BcpDecoder::decode` + `DefaultDriver::render` |
+| `stats` | `BcpDecoder::decode` + `HeuristicEstimator` |
+
+## bcp inspect
+
+Print a human-readable block summary of a BCP file.
+
+```bash
+bcp inspect <FILE> [--show-body] [--show-hex] [--block N]
+```
+
+| Flag | Effect |
+|------|--------|
+| `--show-body` | Include first 80 chars of block content (UTF-8 lossy) |
+| `--show-hex` | Include 16-byte-per-line hex dump of block body |
+| `--block N` | Show only the block at zero-based index N |
+
+Example output:
+
+```
+Header: BCP v1.0, flags=0x00, 6 blocks
+Block 0: CODE [rust] path="src/main.rs" (32 bytes)
+         Summary: "Entry point"
+         Body:    fn main() { println!("hello"); }
+Block 1: CONVERSATION [user] (20 bytes)
+Block 2: ANNOTATION target=1 kind=priority value="high" (1 bytes)
+Block 3: TOOL_RESULT [ripgrep] status=ok (32 bytes)
+Block 4: DOCUMENT title="API Reference" (38 bytes)
+         Summary: "API docs"
+Block 5: STRUCTURED_DATA format=json (29 bytes)
+---
+END sentinel at offset 278
+```
+
+## bcp validate
+
+Check a BCP file for structural correctness. Exits 0 on success, 1 on failure.
+
+```bash
+bcp validate <FILE>
+```
+
+**Success output:**
+
+```
++ Header: valid (BCP v1.0)
++ Blocks: 6 blocks parsed successfully
++ Sentinel: END block present
++ Integrity: all block bodies parse without error
+```
+
+**Failure output:**
+
+```
+x Error: invalid header -- invalid magic number: expected 0x42435000, got 0xDEADBEEF
+```
+
+Validation covers all four structural layers: header, decompression, block frames, and block bodies.
+
+<Tip>
+Use `bcp validate` as a pre-commit check: `bcp validate context.bcp || exit 1`
+</Tip>
+
+## bcp encode
+
+Create a BCP file from a JSON manifest.
+
+```bash
+bcp encode <MANIFEST> -o <OUTPUT> [--compress-blocks] [--compress-payload] [--dedup]
+```
+
+| Flag | Effect |
+|------|--------|
+| `--compress-blocks` | zstd-compress each block body individually |
+| `--compress-payload` | zstd-compress all blocks as one stream |
+| `--dedup` | BLAKE3 dedup via in-memory content store |
+
+### Manifest Format
+
+```json
+{
+  "blocks": [
+    {
+      "type": "code",
+      "lang": "rust",
+      "path": "src/main.rs",
+      "content": "fn main() { println!(\"hello\"); }",
+      "summary": "Entry point",
+      "priority": "high"
+    },
+    {
+      "type": "conversation",
+      "role": "user",
+      "content": "Fix the timeout bug."
+    },
+    {
+      "type": "tool_result",
+      "name": "ripgrep",
+      "status": "ok",
+      "content": "src/main.rs:5: let timeout = 30;"
+    }
+  ]
+}
+```
+
+### Supported Block Types
+
+| Type | Required Fields |
+|------|----------------|
+| `code` | `lang`, `path`, `content` (or `content_file`) |
+| `conversation` | `role`, `content` (or `content_file`) |
+| `tool_result` | `name`, `content` (or `content_file`) |
+| `document` | `title`, `content` (or `content_file`) |
+| `structured_data` | `format`, `content` (or `content_file`) |
+
+Optional on any block: `summary` (string), `priority` (`critical` | `high` | `normal` | `low` | `background`).
+
+<Note>
+The `content_file` key substitutes `content` -- the encoder reads the file at the given path relative to the manifest's parent directory.
+</Note>
+
+### Enum Values
+
+| Enum | Values |
+|------|--------|
+| `lang` | `rust`, `typescript`, `javascript`, `python`, `go`, `java`, `c`, `cpp`, `ruby`, `shell`, `sql`, `html`, `css`, `json`, `yaml`, `toml`, `markdown` |
+| `role` | `system`, `user`, `assistant`, `tool` |
+| `status` | `ok`, `error`, `timeout` (default: `ok`) |
+| `format` (document) | `markdown`, `plain`, `html` |
+| `format` (structured_data) | `json`, `yaml`, `toml`, `csv` |
+| `priority` | `critical`, `high`, `normal`, `low`, `background` |
+
+## bcp decode
+
+Render a BCP file as model-ready text.
+
+```bash
+bcp decode <FILE> [--mode xml|markdown|minimal] [--verbosity full|summary|adaptive]
+                  [--budget N] [--include types] [-o <FILE>]
+```
+
+| Flag | Values / Default |
+|------|-----------------|
+| `--mode` | `xml` (default), `markdown`, `minimal` |
+| `--verbosity` | `full`, `summary`, `adaptive` (default) |
+| `--budget` | Approximate token count (none = no limit) |
+| `--include` | Comma-separated block types to render |
+| `-o` / `--output` | Write to file instead of stdout |
+
+Example with type filtering:
+
+```bash
+bcp decode context.bcp --include code,conversation --mode minimal
+```
+
+<Tip>
+When `--budget N` is set with `--verbosity adaptive`, the driver's budget engine assigns per-block render decisions based on priorities. See the [bcp-driver reference](/reference/crate-bcp-driver) for budget engine details.
+</Tip>
+
+## bcp stats
+
+Print size and token-efficiency statistics for a BCP file.
+
+```bash
+bcp stats <FILE>
+```
+
+Example output:
+
+```
+File:    context.bcp  (282 bytes)
+Header:  BCP v1.0, flags=0x00 (uncompressed)
+Blocks:  6 total
+
+Type                 Count   Bytes
+------------------------------------
+CODE                     1      32
+CONVERSATION             1      20
+ANNOTATION               1       1
+TOOL_RESULT              1      32
+DOCUMENT                 1      38
+STRUCTURED_DATA          1      29
+------------------------------------
+Total                    6     152
+
+Tokens (heuristic estimate):
+  xml mode      ~93 tokens
+  markdown mode ~68 tokens
+  minimal mode  ~64 tokens
+```
+
+Token estimates use `HeuristicEstimator` (4 chars ~ 1 token). The `~` prefix signals they are approximations.
+
+## Clap Struct
+
+```rust
+#[derive(Parser)]
+#[command(name = "bcp", version, about = "Bit Context Protocol CLI")]
+struct Cli {
+    #[command(subcommand)]
+    command: Commands,
+
+    #[arg(short, long, global = true)]
+    verbose: bool,
+
+    #[arg(long, global = true)]
+    no_color: bool,
+}
+```
+
+Global flags (`--verbose`, `--no-color`) are defined with `global = true` so they are accepted before or after the subcommand name.
+
+## Error Handling
+
+All commands return `anyhow::Result<()>`. The `main()` dispatcher prints errors using anyhow's chain format and calls `process::exit(1)`.
+
+| DecodeError Variant | Diagnostic Message |
+|--------------------|--------------------|
+| `InvalidHeader` | `invalid header -- <inner error>` |
+| `MissingEndSentinel` | `missing END sentinel` |
+| `TrailingData` | `trailing data after END (N bytes)` |
+| `MissingContentStore` | `content-addressed block with no store` |
+| `UnresolvedReference` | `unresolved BLAKE3 reference <hex8>...` |
+| Wire / Type / Decompress | `<error Display>` |
+
+### Exit Codes
+
+| Code | Meaning |
+|------|---------|
+| 0 | Success |
+| 1 | Error (I/O failure, invalid file, bad flag, etc.) |
+
+## Module Map
+
+```
+crates/bcp-cli/
++-- Cargo.toml          -> bin [[bin]] name="bcp", workspace deps
++-- src/
+    +-- main.rs         -> Cli/Commands/Args structs, dispatch, exit code handling
+    +-- cmd_inspect.rs  -> bcp inspect
+    +-- cmd_validate.rs -> bcp validate
+    +-- cmd_encode.rs   -> bcp encode (manifest parsing, BcpEncoder builder)
+    +-- cmd_decode.rs   -> bcp decode (DefaultDriver dispatch)
+    +-- cmd_stats.rs    -> bcp stats (block distribution, HeuristicEstimator)
+```
+
+## Build and Test
+
+```bash
+cargo build -p bcp-cli
+cargo run -p bcp-cli -- --help
+
+# End-to-end pipeline
+cargo run -p bcp-cli -- encode manifest.json -o out.bcp
+cargo run -p bcp-cli -- validate out.bcp
+cargo run -p bcp-cli -- inspect out.bcp --show-body
+cargo run -p bcp-cli -- decode out.bcp --mode xml
+cargo run -p bcp-cli -- stats out.bcp
+
+cargo clippy -p bcp-cli -- -W clippy::pedantic
+```

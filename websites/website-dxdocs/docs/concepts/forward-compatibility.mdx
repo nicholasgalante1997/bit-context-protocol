@@ -1,0 +1,79 @@
+---
+title: "Forward Compatibility"
+description: "How BCP decoders gracefully handle unknown block types, fields, and enum values from newer encoders."
+---
+
+BCP is designed so that older decoders can read payloads produced by newer encoders without failing. This is critical for a binary format used in distributed toolchains where encoders and decoders are updated independently.
+
+
+<Callout variant="info">
+  BCP follows the Protobuf-style philosophy: unknown fields are preserved, not rejected. This allows encoders and decoders to evolve independently.
+
+</Callout>
+
+## Three Layers of Tolerance
+
+Forward compatibility operates at three distinct levels in the wire format, each ensuring that unrecognized data is handled gracefully rather than causing a decode failure.
+
+### 1. Unknown Block Types
+
+Every block frame begins with a `type_id` byte identifying its semantic type (Code = 0x01, Conversation = 0x02, etc.). When the decoder encounters a `type_id` it does not recognize, it wraps the block in a `BlockContent::Unknown` variant:
+
+```rust
+BlockContent::Unknown {
+    type_id: 0x20,  // hypothetical future type
+    body: Vec<u8>,  // raw body bytes, preserved verbatim
+}
+```
+
+The unknown block is included in the decoded output alongside known blocks. Tools can inspect, forward, or re-encode it without data loss.
+
+### 2. Unknown TLV Field IDs
+
+Within each block body, fields are encoded using a Tag-Length-Value (TLV) scheme. Each field has a numeric ID, a length, and a value. When the decoder encounters a field ID it does not recognize within a known block type, it calls `skip_field()` to advance past the field's bytes without parsing them.
+
+This means a v1.1 encoder can add new optional fields to the Code block (e.g., a `syntax_version` field), and a v1.0 decoder will skip those fields and decode all the fields it does understand.
+
+### 3. Unknown Enum Values
+
+Enum types like `Lang` (programming language), `Role` (conversation role), and `Status` (tool result status) include catch-all variants for unrecognized values:
+
+```rust
+pub enum Lang {
+    Rust,       // 0x01
+    Python,     // 0x02
+    TypeScript, // 0x03
+    // ... known variants ...
+    Other(u8),  // any unrecognized byte
+}
+```
+
+A v1.0 decoder reading a payload with `Lang` byte `0x30` (a language added in v1.1) will decode it as `Lang::Other(0x30)`. The value is preserved through roundtrip encode/decode cycles.
+
+## The END Sentinel
+
+The END sentinel block (`type_id = 0xFF`) is always recognized regardless of format version. It signals the end of the block stream and is the only block type that carries no body. This ensures that every decoder, regardless of version, can reliably detect where the block sequence terminates.
+
+## What This Means in Practice
+
+A concrete example: suppose v1.1 of BCP adds a new block type `Metric` (type_id = 0x20) with a new field `unit` (field_id = 0x10) and a new language `Zig` (Lang byte = 0x15).
+
+A v1.0 decoder reading this payload will:
+
+| Element | v1.0 Decoder Behavior |
+|---------|----------------------|
+| `Metric` block (type 0x20) | Decoded as `BlockContent::Unknown { type_id: 0x20, body: ... }` |
+| `unit` field in a Code block | Skipped via `skip_field()`, remaining fields decoded normally |
+| `Lang::Zig` (0x15) | Decoded as `Lang::Other(0x15)` |
+| All known blocks and fields | Decoded normally with full fidelity |
+
+No errors. No panics. No data loss for known fields. The payload is fully usable, and the unknown elements are preserved for any downstream tool that does understand them.
+
+## Design Constraints
+
+Forward compatibility requires that the wire format obey two rules:
+
+1. **Every block frame includes a `body_len` field.** This allows the decoder to skip the entire body of an unknown block type by advancing `body_len` bytes.
+2. **Every TLV field includes a length prefix.** This allows the decoder to skip an unknown field by advancing past its length-prefixed value.
+
+These constraints are baked into `bcp-wire`'s `BlockFrame` and `bcp-types`'s TLV encoding, so all current and future block types automatically inherit forward compatibility.

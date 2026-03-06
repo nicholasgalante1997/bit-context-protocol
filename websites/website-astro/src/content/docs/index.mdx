@@ -1,0 +1,71 @@
+---
+title: "What is the Bit Context Protocol?"
+description: "BCP is a binary serialization format that maximizes semantic density within token-constrained LLM context windows."
+---
+
+import { Card, CardGrid, LinkCard } from '@astrojs/starlight/components';
+
+BCP (Bit Context Protocol) is a compact, typed binary format for encoding structured context for large language models. Where traditional approaches waste 30-50% of context window tokens on markdown fences, JSON envelopes, and repeated path prefixes, BCP packs the same semantic content into a binary representation that decodes into token-efficient text.
+
+Think of BCP like a compression layer purpose-built for LLM context. It understands the _semantics_ of what you're sending — code, conversations, tool results, file trees — and encodes each with minimal structural overhead.
+
+![BCP data flow: Tool/Agent → bcp-encoder → .bcp binary → bcp-decoder → bcp-driver → LLM](../../assets/images/data-flow.svg)
+
+## The Problem
+
+Current approaches to providing context to LLMs are wasteful:
+
+- A code block doesn't need triple backticks, a language identifier string, and a trailing fence — it needs a type tag and the raw content.
+- A conversation turn doesn't need `### User:\n\n` — it needs a role byte and the message body.
+- Tool results arrive in verbose JSON-RPC envelopes when the model only needs the output and a status flag.
+
+In a typical 100K-token agent context window with 35% structural overhead, BCP can recover **15,000-25,000 tokens** — equivalent to 3-5 additional source files.
+
+## What BCP Provides
+
+<CardGrid>
+  <Card title="11 Semantic Block Types">
+    Code, conversations, file trees, tool results, diffs, documents, structured data, annotations, embeddings, images, and extensions.
+  </Card>
+  <Card title="3 Render Modes">
+    XML-tagged (Claude-optimized), Markdown (universal), and Minimal (max efficiency). The driver picks the best format for your target model.
+  </Card>
+  <Card title="Token Budget Engine">
+    Priority-based degradation automatically summarizes or omits low-priority blocks to fit within a token budget.
+  </Card>
+</CardGrid>
+
+<CardGrid>
+  <Card title="Zstd Compression">
+    Per-block or whole-payload compression with a 256-byte threshold and decompression bomb protection.
+  </Card>
+  <Card title="Content Addressing">
+    BLAKE3 hashing deduplicates identical blocks across payloads.
+  </Card>
+  <Card title="Streaming Decode">
+    Async incremental parsing via `StreamingDecoder` — process blocks as they arrive.
+  </Card>
+</CardGrid>
+
+## Architecture
+
+BCP is implemented as a Rust workspace of composable crates:
+
+| Crate | Purpose | Status |
+|-------|---------|--------|
+| `bcp-wire` | Varint encoding, file header, block frame envelope | Complete |
+| `bcp-types` | 11 semantic block types, TLV field encoding, shared enums | Complete |
+| `bcp-encoder` | Builder API with compression and content addressing | Complete |
+| `bcp-decoder` | Sync + async streaming decoder with forward compatibility | Complete |
+| `bcp-driver` | XML/Markdown/Minimal render modes, token budget engine | Complete |
+| `bcp-cli` | inspect, validate, encode, decode, stats commands | Complete |
+| `bcp-tests` | Golden fixtures, snapshot conformance, roundtrip, benchmarks | Complete |
+
+## Start Building
+
+<CardGrid>
+  <LinkCard title="Quick Start" href="/quickstart" description="Build BCP and run your first encode/decode in under 2 minutes." />
+  <LinkCard title="Architecture" href="/concepts/architecture" description="Understand how the crates compose and the data flow pipeline." />
+  <LinkCard title="CLI Reference" href="/guides/cli" description="Inspect, validate, encode, decode, and analyze .bcp files from the command line." />
+  <LinkCard title="Block Types" href="/concepts/block-types" description="Explore all 11 semantic block types and their field layouts." />
+</CardGrid>

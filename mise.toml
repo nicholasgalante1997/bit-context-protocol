@@ -89,6 +89,20 @@ run = "bunx serve -p 8080 ./target/doc"
 description = "Serve the docsify documentation site on port 4040"
 run = "bunx serve -p 4040 ./docs"
 
+# ── Website (Mintlify) ─────────────────────────────────────────────────────
+
+[tasks."website:dev"]
+description = "Start the Mintlify dev server for the documentation website"
+run = "cd website && bunx mint dev"
+
+[tasks."website:build"]
+description = "Build the Mintlify documentation website"
+run = "cd website && bunx mint build"
+
+[tasks."website:broken-links"]
+description = "Check for broken links in the documentation website"
+run = "cd website && bunx mint broken-links"
+
 # ── CI (composite) ──────────────────────────────────────────────────────────
 
 [tasks.ci]

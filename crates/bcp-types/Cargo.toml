@@ -2,9 +2,15 @@
 name = "bcp-types"
 version = "0.1.0"
 edition = "2024"
+description = "Core type definitions for the Bit Context Protocol"
+license = "MIT"
+repository = "https://github.com/mega-blastoise/bit-context-protocol"
+homepage = "https://bitcontextprotocol.com"
+keywords = ["bcp", "context", "types"]
+categories = ["encoding", "data-structures"]
 
 [dependencies]
-bcp-wire = { path = "../bcp-wire" }
+bcp-wire = { path = "../bcp-wire", version = "0.1.0" }
 thiserror = { workspace = true }
 
 [dev-dependencies]

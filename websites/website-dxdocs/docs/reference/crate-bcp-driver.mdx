@@ -1,0 +1,346 @@
+---
+title: "bcp-driver"
+description: "Rendering layer that converts decoded BCP blocks into model-ready text in XML, Markdown, or Minimal output modes, with a token budget engine for priority-based content degradation."
+---
+
+The rendering layer. Takes decoded `Vec<Block>` from `bcp-decoder` and produces model-ready text in XML, Markdown, or Minimal output modes. Includes the **Token Budget Engine** -- a two-pass algorithm that fits blocks within a token limit by degrading lower-priority content to summaries, placeholders, or omissions.
+
+## Crate Info
+
+| Field | Value |
+|-------|-------|
+| Path | `crates/bcp-driver/` |
+| Dependencies | `bcp-wire`, `bcp-types`, `thiserror` |
+| Dev Dependencies | `bcp-encoder`, `bcp-decoder` (integration tests) |
+
+## Purpose and Role in the Protocol
+
+The driver is the consumption endpoint of the BCP pipeline:
+
+```
+.bcp binary -> bcp-decoder -> Vec<Block> -> bcp-driver -> model-ready text -> LLM
+```
+
+The RFC (Section 5.1) describes the driver as "not a simple deserializer -- it is an opinionated renderer that makes decisions about how to present context to maximize model comprehension within a token budget."
+
+- **XML mode** wraps blocks in semantic elements like `<code lang="rust" path="src/main.rs">`, optimized for Claude-family models.
+- **Markdown mode** produces conventional fenced code blocks and headers, compatible with every model.
+- **Minimal mode** uses single-line delimiters like `--- src/main.rs [rust] ---`, achieving maximum token efficiency.
+
+## BcpDriver Trait
+
+The public interface is a single-method trait:
+
+```rust
+pub trait BcpDriver {
+    fn render(
+        &self,
+        blocks: &[Block],
+        config: &DriverConfig,
+    ) -> Result<String, DriverError>;
+}
+```
+
+Implementations are expected to be **stateless** -- all configuration comes through `DriverConfig`, and the block slice is immutable.
+
+## DefaultDriver
+
+The standard implementation. It performs a three-step pipeline:
+
+### Step 1: Filter
+
+- Remove Annotation blocks (metadata-only, never rendered)
+- Remove End blocks (wire sentinels, not content)
+- Apply `include_types` filter (if set in config)
+- Track `original_indices` for annotation-to-block mapping
+- If zero blocks remain, return `DriverError::EmptyInput`
+
+### Step 2: Budget Decisions
+
+Based on `config.verbosity` and `config.token_budget`, the driver computes a `RenderDecision` per block:
+
+| Condition | Strategy |
+|-----------|----------|
+| `(_, Summary)` | Summary where available, else Full. Budget is ignored. |
+| `(Some(budget), Adaptive)` | Run the full budget engine. Per-block decisions based on priority + budget remaining. |
+| `(None, Adaptive)` or `(_, Full)` | All blocks render Full. Budget is ignored. |
+
+### Step 3: Dispatch
+
+The selected renderer receives `(block, decision)` pairs.
+
+| `OutputMode` | Renderer | Wrapper |
+|-------------|----------|---------|
+| `Xml` | `XmlRenderer` | `<context>...</context>` |
+| `Markdown` | `MarkdownRenderer` | None |
+| `Minimal` | `MinimalRenderer` | None |
+
+## Token Budget Engine
+
+The budget engine implements RFC Section 5.5's two-pass algorithm. It is invoked only when `config.token_budget` is `Some(n)` and `config.verbosity` is `Adaptive`.
+
+### Algorithm
+
+```
+all_blocks -> resolve_priorities() -> HashMap<u32, Priority>
+filtered   -> scan_blocks()        -> Vec<BlockBudgetInfo>
+                                   -> allocate_budget()
+                                   -> Vec<RenderDecision>
+```
+
+**Pass 1: Scan** -- Extract priority annotations into a `HashMap<target_block_id, Priority>`. Estimate full-content and summary token costs using a `TokenEstimator`.
+
+**Pass 2: Allocate** -- Sort blocks by priority (Critical first, Background last). Walk sorted blocks, greedily subtracting from remaining budget.
+
+### Priority Degradation Paths
+
+| Priority | Degradation Path |
+|----------|-----------------|
+| Critical | Full (always, even over budget) |
+| High | Full -> Summary -> Full (forced, over budget) |
+| Normal | Full -> Summary -> Placeholder |
+| Low | Summary -> Placeholder |
+| Background | Placeholder -> Omit |
+
+
+<Callout variant="info">
+Critical blocks always render in full -- they represent content the user explicitly marked as essential. Budget violation is acceptable. Background blocks only get placeholders (~10 tokens). If even that will not fit, they are omitted entirely.
+
+</Callout>
+
+### Token Estimation
+
+The `TokenEstimator` trait is pluggable:
+
+```rust
+pub trait TokenEstimator: Send + Sync {
+    fn estimate(&self, text: &str) -> u32;
+}
+```
+
+Two implementations ship with the crate:
+
+| Estimator | Ratio | Best For |
+|-----------|-------|----------|
+| `HeuristicEstimator` | chars / 4 | Quick approximation, all text |
+| `CodeAwareEstimator` | chars / 3 for code, chars / 4 for prose | Mixed code + prose payloads |
+
+### RenderDecision
+
+| Variant | Behavior |
+|---------|----------|
+| `Full` | Render complete block content |
+| `Summary` | Render summary text only |
+| `Placeholder` | Emit a compact omission notice with metadata |
+| `Omit` | Skip the block entirely |
+
+### Numeric Example
+
+Consider 3 blocks with a budget of 150 tokens:
+
+```
+Block A: Critical, full=100tok, no summary
+Block B: Normal, full=80tok, summary=10tok
+Block C: Background, full=60tok, no summary
+```
+
+Allocation (sorted by priority):
+1. **A (Critical)**: Full -> budget 150 - 100 = 50 remaining
+2. **B (Normal)**: Full costs 80, over budget. Summary costs 10, fits -> Summary. Budget 50 - 10 = 40 remaining
+3. **C (Background)**: Placeholder costs 10, fits -> Placeholder. Budget 40 - 10 = 30 remaining
+
+Result: `[Full, Summary, Placeholder]`
+
+## Placeholders
+
+When a block is reduced to a placeholder, the driver emits a compact notice:
+
+| Mode | Output |
+|------|--------|
+| Xml | `<omitted type="code" desc="src/main.rs" tokens="823"/>` |
+| Markdown | `_[Omitted: code src/main.rs, ~823 tokens]_` |
+| Minimal | `[omitted: code src/main.rs ~823tok]` |
+
+Placeholders cost ~10-15 tokens regardless of the omitted block's size.
+
+## DriverConfig
+
+```rust
+pub struct DriverConfig {
+    pub mode: OutputMode,
+    pub target_model: Option<ModelFamily>,
+    pub include_types: Option<Vec<BlockType>>,
+    pub token_budget: Option<u32>,
+    pub verbosity: Verbosity,
+}
+```
+
+| Field | Type | Default | Purpose |
+|-------|------|---------|---------|
+| `mode` | `OutputMode` | `Xml` | Selects XML, Markdown, or Minimal rendering |
+| `target_model` | `Option<ModelFamily>` | `None` | Model-specific formatting hints (reserved) |
+| `include_types` | `Option<Vec<BlockType>>` | `None` | When set, only render blocks of these types |
+| `token_budget` | `Option<u32>` | `None` | Approximate token limit for rendered output |
+| `verbosity` | `Verbosity` | `Adaptive` | Full / Summary / Adaptive rendering mode |
+
+### Verbosity
+
+| Mode | Behavior |
+|------|----------|
+| `Full` | Always render full content. Ignore budget entirely. |
+| `Summary` | Always render summaries where available, full content otherwise. Budget is ignored. |
+| `Adaptive` | Auto-select per block based on budget + priority. Without a budget, behaves like Full. |
+
+### OutputMode
+
+```rust
+pub enum OutputMode {
+    Xml,      // <code lang="rust" path="...">content</code>
+    Markdown, // ## path\n\n```rust\ncontent\n```
+    Minimal,  // --- path [lang] ---\ncontent
+}
+```
+
+### ModelFamily
+
+```rust
+pub enum ModelFamily {
+    Claude,   // Strong XML parsing, prefers semantic tags
+    Gpt,      // Strong markdown parsing, prefers fenced blocks
+    Gemini,   // Handles both XML and markdown well
+    Generic,  // No model-specific tuning
+}
+```
+
+
+<Callout variant="info">
+Currently `target_model` does not affect output. It is reserved for future use where it may influence attribute ordering, header depth, or other formatting choices.
+
+</Callout>
+
+## Renderers
+
+All three renderers share a common pattern: `render_all_with_decisions(&[(&Block, &RenderDecision)])` is the primary rendering path.
+
+### XmlRenderer
+
+Wraps all output in `<context>...</context>`. Block type mappings:
+
+| Block Type | XML Element |
+|------------|------------|
+| Code | `<code lang="X" path="Y">...</code>` |
+| Conversation | `<turn role="X">...</turn>` |
+| FileTree | `<tree root="X">...</tree>` |
+| ToolResult | `<tool name="X" status="Y">...</tool>` |
+| Document | `<doc title="X" format="Y">...</doc>` |
+| StructuredData | `<data format="X">...</data>` |
+| Diff | `<diff path="X">...</diff>` |
+| EmbeddingRef | `<embed-ref model="X" />` |
+| Image | `<image type="X" alt="Y">...</image>` |
+| Extension | `<ext ns="X" type="Y">...</ext>` |
+| Unknown | `<!-- unknown block type 0xNN -->` |
+
+Summary rendering adds `summary="true"` to the element:
+
+```xml
+<code lang="rust" path="src/main.rs" summary="true">
+Entry point: CLI arg parsing, config loading, server startup.
+</code>
+```
+
+### MarkdownRenderer
+
+Uses conventional markdown formatting. No outer wrapper.
+
+- Code blocks: `## path` + fenced code blocks
+- Conversation: bold role labels (`**User**: content`)
+- Tool results: `### Tool: name (status)`
+- Summary mode: `## path (summary)` suffix
+
+### MinimalRenderer
+
+Uses the fewest structural tokens. Single-line delimiters.
+
+- Code: `--- path [lang] ---`
+- Conversation: `[role] content`
+- Tools: `--- name [status] ---`
+- Summary mode: `--- path [lang] (summary) ---`
+
+## DriverError
+
+```rust
+pub enum DriverError {
+    EmptyInput,
+    UnsupportedBlockType { block_type: BlockType },
+    InvalidContent { block_index: usize },
+}
+```
+
+| Variant | Cause |
+|---------|-------|
+| `EmptyInput` | No renderable blocks after filtering |
+| `UnsupportedBlockType` | Block type cannot be rendered |
+| `InvalidContent` | Block body is not valid UTF-8 |
+
+## Integration: Encode, Decode, Render
+
+```rust
+use bcp_encoder::BcpEncoder;
+use bcp_decoder::BcpDecoder;
+use bcp_driver::{DefaultDriver, DriverConfig, BcpDriver, OutputMode, Verbosity};
+use bcp_types::enums::{Lang, Priority, Role, Status};
+
+let payload = BcpEncoder::new()
+    .add_code(Lang::Rust, "src/main.rs", b"fn main() { ... }")
+    .with_summary("Entry point: prints hello.")
+    .with_priority(Priority::Critical)
+    .add_tool_result("ripgrep", Status::Ok, b"3 matches found.")
+    .encode()?;
+
+let decoded = BcpDecoder::decode(&payload)?;
+let driver = DefaultDriver;
+
+let config = DriverConfig {
+    mode: OutputMode::Xml,
+    token_budget: Some(500),
+    verbosity: Verbosity::Adaptive,
+    ..DriverConfig::default()
+};
+
+let text = driver.render(&decoded.blocks, &config)?;
+```
+
+## Module Map
+
+```
+src/
++-- lib.rs              -> Re-exports DefaultDriver, BcpDriver, DriverConfig, OutputMode,
+|                          Verbosity, RenderDecision, TokenEstimator, etc.
++-- config.rs           -> DriverConfig, OutputMode, ModelFamily, Verbosity
++-- driver.rs           -> BcpDriver trait, DefaultDriver (13 tests)
++-- render_xml.rs       -> XmlRenderer + shared display helpers (4 tests)
++-- render_markdown.rs  -> MarkdownRenderer (3 tests)
++-- render_minimal.rs   -> MinimalRenderer (3 tests)
++-- budget.rs           -> Token budget engine: RenderDecision, TokenEstimator,
+|                          HeuristicEstimator, CodeAwareEstimator, priority resolution,
+|                          scan/allocate algorithm (26 tests)
++-- placeholder.rs      -> Placeholder rendering per output mode (4 tests)
++-- error.rs            -> DriverError enum
+
+tests/
++-- render_integration.rs -> Full pipeline tests: encode -> decode -> render (6 tests)
+```
+
+## Build and Test
+
+```bash
+cargo build -p bcp-driver
+cargo test -p bcp-driver
+cargo clippy -p bcp-driver -- -W clippy::pedantic
+
+# Budget-specific tests
+cargo test -p bcp-driver -- budget
+
+# Integration tests
+cargo test -p bcp-driver --test render_integration
+```

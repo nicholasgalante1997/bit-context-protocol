@@ -20,5 +20,6 @@
     "types": ["bun", "node"],
     "typeRoots": ["node_modules/@types"]
   },
-  "exclude": ["node_modules", "**/*"]
+  "include": ["packages"],
+  "exclude": ["node_modules", "out"]
 }

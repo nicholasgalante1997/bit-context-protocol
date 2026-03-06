@@ -1,0 +1,101 @@
+---
+title: "Token Budget Engine"
+description: "How the bcp-driver uses priority-based degradation to fit blocks within a token budget."
+---
+
+The token budget engine in `bcp-driver` solves a core problem: given a set of decoded BCP blocks and a maximum token count, which blocks should be rendered in full, which should be summarized, and which should be omitted?
+
+## Overview
+
+The engine uses a **two-pass algorithm** that scans all blocks, estimates their token costs, and then greedily allocates budget from highest-priority blocks downward. Each block receives the best possible rendering given the remaining budget.
+
+<Steps>
+  <Step title="Scan Pass">
+    Read all block headers and summaries. Estimate the token cost of each block at every possible rendering level (Full, Summary, Placeholder) using the configured `TokenEstimator`.
+  </Step>
+  <Step title="Budget Pass">
+    Sort blocks by priority (Critical first, Background last). Walk the sorted list and greedily allocate budget. Each block receives the highest-fidelity rendering that fits within the remaining token budget.
+  </Step>
+</Steps>
+
+## Priority Levels
+
+Every block carries a `Priority` value that determines how aggressively it is preserved or degraded:
+
+| Priority | Behavior | Degradation Path |
+|----------|----------|-----------------|
+| **Critical** | Always rendered in full, never degraded | Full |
+| **High** | Prefer full rendering, summarize only under pressure | Full → Summary |
+| **Normal** | Default level, summarize if needed | Full → Summary → Placeholder |
+| **Low** | Summarize aggressively, placeholder early | Summary → Placeholder |
+| **Background** | First to be omitted | Placeholder → Omit |
+
+## Render Decisions
+
+The budget engine assigns one of four `RenderDecision` values to each block:
+
+| Decision | Output |
+|----------|--------|
+| **Full** | Complete block content rendered verbatim |
+| **Summary** | Block's summary text (from `HAS_SUMMARY` flag) replaces the full body |
+| **Placeholder** | Minimal marker indicating a block exists (type + path, no content) |
+| **Omit** | Block is excluded from output entirely |
+
+## Configuration
+
+Configure the budget engine through `DriverConfig`:
+
+```rust
+use bcp_driver::{DriverConfig, OutputMode, Verbosity};
+
+let config = DriverConfig {
+    mode: OutputMode::Xml,
+    verbosity: Verbosity::Adaptive,
+    token_budget: Some(8000),
+    ..Default::default()
+};
+```
+
+- **`token_budget`**: Maximum tokens for rendered output. `None` disables budgeting.
+- **`verbosity`**: Controls rendering behavior:
+  - `Full` — render all blocks in full, ignore budget.
+  - `Adaptive` — apply the two-pass budget algorithm.
+  - `Minimal` — aggressive summarization regardless of budget.
+- **`mode`**: Output format (`Xml`, `Markdown`, `Minimal`) affects token estimates since different formats have different structural overhead.
+
+<Tip>
+  Set token_budget to None and verbosity to Full to render all blocks without budget constraints.
+</Tip>
+
+## Token Estimation
+
+The budget engine uses a `TokenEstimator` trait to predict how many tokens a block will consume when rendered:
+
+```rust
+pub trait TokenEstimator: Send + Sync {
+    fn estimate(&self, text: &str) -> u32;
+}
+```
+
+BCP ships with two implementations:
+
+| Estimator | Method | Speed | Accuracy |
+|-----------|--------|-------|----------|
+| **HeuristicEstimator** | `chars / 4` | Very fast | Approximate |
+| **CodeAwareEstimator** | Language-aware heuristics (adjusts for whitespace, keywords) | Fast | Better for code |
+
+For production use cases requiring exact counts, implement `TokenEstimator` against a real tokenizer (e.g., `tiktoken` bindings).
+
+## Example: Budget in Action
+
+Given 5 blocks and a budget of 2000 tokens:
+
+```
+Block 1: Code (Critical, ~800 tokens)  → Full    [800 used]
+Block 2: Code (High, ~600 tokens)      → Full    [1400 used]
+Block 3: Tool (Normal, ~400 tokens)    → Summary [1550 used, summary ~150 tokens]
+Block 4: Conv (Normal, ~500 tokens)    → Placeholder [1570 used, ~20 tokens]
+Block 5: Code (Background, ~300 tokens) → Omit   [1570 used]
+```
+
+Critical blocks are never degraded. High-priority blocks are preserved as long as budget allows. Normal blocks degrade through Summary and Placeholder. Background blocks are omitted first.

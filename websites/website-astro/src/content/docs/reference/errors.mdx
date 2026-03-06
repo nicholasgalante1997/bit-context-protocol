@@ -1,0 +1,168 @@
+---
+title: "Error Catalog"
+description: "Complete reference of all error types across the BCP workspace: WireError, TypeError, CompressionError, EncodeError, DecodeError, and DriverError, with propagation graph."
+---
+
+All error types across the BCP workspace, organized by crate. Every error enum uses `thiserror` for `Display` and `Error` trait derivation. Error propagation uses `#[from]` for transparent `?` operator conversion.
+
+## bcp-wire: WireError
+
+Low-level binary format errors. Used directly by `bcp-wire` and wrapped by downstream crates.
+
+```rust
+pub enum WireError {
+    VarintTooLong,
+    UnexpectedEof { offset: usize },
+    InvalidMagic { found: u32 },
+    UnsupportedVersion { major: u8, minor: u8 },
+    ReservedNonZero { offset: usize, value: u8 },
+    Io(#[from] std::io::Error),
+}
+```
+
+| Variant | Trigger | Context |
+|---------|---------|---------|
+| `VarintTooLong` | Varint exceeds 10 bytes without termination | Malformed or corrupted varint data |
+| `UnexpectedEof` | Input ends before a complete read | Truncated payload or buffer too short |
+| `InvalidMagic` | First 4 bytes are not `BCP\0` | Not a BCP file, or wrong byte order |
+| `UnsupportedVersion` | Major version is not 1 | Future version or corrupted header |
+| `ReservedNonZero` | Reserved byte at offset is not `0x00` | Corrupted header or incompatible producer |
+| `Io` | Underlying I/O failure | File read/write errors |
+
+## bcp-types: TypeError
+
+Block body deserialization errors. Raised when TLV field parsing encounters structural problems.
+
+```rust
+pub enum TypeError {
+    MissingRequiredField { block_type: &'static str, field_name: &'static str },
+    UnknownFieldWireType { value: u64 },
+    InvalidEnumValue { enum_name: &'static str, value: u8 },
+    Wire(WireError),
+}
+```
+
+| Variant | Trigger | Context |
+|---------|---------|---------|
+| `MissingRequiredField` | Mandatory field absent in block body | Required TLV field not found after scanning all fields |
+| `UnknownFieldWireType` | Wire type value outside 0-2 | Corrupted body or incompatible producer |
+| `InvalidEnumValue` | Enum byte out of defined range | Unknown role, status, format hint, etc. |
+| `Wire(WireError)` | Varint/framing error during field parsing | Transparent delegation to bcp-wire |
+
+## bcp-encoder: CompressionError
+
+Zstd compression/decompression errors. Raised when the codec encounters an issue or safety limits are exceeded.
+
+```rust
+pub enum CompressionError {
+    CompressFailed(String),
+    DecompressFailed(String),
+    DecompressionBomb { actual: usize, limit: usize },
+}
+```
+
+| Variant | Trigger | Context |
+|---------|---------|---------|
+| `CompressFailed(String)` | Zstd encoder returned an error | Rare -- typically indicates invalid compression level |
+| `DecompressFailed(String)` | Zstd decoder cannot parse input | Invalid frame, truncated data, or non-zstd input |
+| `DecompressionBomb` | Decompressed size exceeds safety limit | Crafted input designed to decompress to excessive size |
+
+## bcp-encoder: EncodeError
+
+Payload construction errors. Raised during the `encode()` call.
+
+```rust
+pub enum EncodeError {
+    EmptyPayload,
+    BlockTooLarge { size: usize, limit: usize },
+    NoBlockTarget { method: &'static str },
+    MissingContentStore,
+    Compression(CompressionError),
+    Wire(WireError),
+    Io(std::io::Error),
+}
+```
+
+| Variant | Trigger | Context |
+|---------|---------|---------|
+| `EmptyPayload` | `encode()` called with no blocks added | Builder has zero pending blocks |
+| `BlockTooLarge` | Single block body exceeds 16 MiB | Extremely large content field |
+| `NoBlockTarget` | Modifier called with no preceding block | `with_summary()`, `with_priority()`, etc. called before any `.add_*()` |
+| `MissingContentStore` | Content addressing enabled without a store | `with_content_addressing()` or `auto_dedup()` called without `set_content_store()` |
+| `Compression(CompressionError)` | Zstd compression/decompression failure | Transparent delegation |
+| `Wire(WireError)` | Wire-level serialization failure | Header or frame write error |
+| `Io(io::Error)` | I/O failure during write | Writer-backed serialization |
+
+## bcp-decoder: DecodeError
+
+Payload parsing errors. Raised by both sync and streaming decoders.
+
+```rust
+pub enum DecodeError {
+    InvalidHeader(WireError),
+    BlockTooLarge { size: usize, offset: usize },
+    MissingField { block_type, field_name, field_id },
+    InvalidUtf8 { block_type, field_name },
+    MissingEndSentinel,
+    TrailingData { extra_bytes: usize },
+    DecompressFailed(String),
+    DecompressionBomb { actual: usize, limit: usize },
+    UnresolvedReference { hash: [u8; 32] },
+    MissingContentStore,
+    Type(TypeError),
+    Wire(WireError),
+    Io(std::io::Error),
+}
+```
+
+| Variant | Trigger | Context |
+|---------|---------|---------|
+| `InvalidHeader` | Bad magic, version, or reserved byte | First 8 bytes do not form a valid header |
+| `BlockTooLarge` | Block body exceeds limit at given offset | Corrupted content_len or oversized block |
+| `MissingField` | Required TLV field absent in block body | Known block type missing a mandatory field |
+| `InvalidUtf8` | String field contains invalid UTF-8 | Corrupted or binary data in string field |
+| `MissingEndSentinel` | Payload does not end with END block | Truncated payload or missing `0xFF` terminator |
+| `TrailingData` | Extra bytes after END sentinel | Possible corruption or buggy encoder |
+| `DecompressFailed(String)` | Zstd decompression failed | Invalid zstd frame, truncated compressed data |
+| `DecompressionBomb` | Decompressed output exceeds safety limit | 16 MiB per block, 256 MiB per payload |
+| `UnresolvedReference` | BLAKE3 hash not found in content store | Content was encoded with a different store |
+| `MissingContentStore` | `IS_REFERENCE` block but no store provided | Use `decode_with_store()` instead of `decode()` |
+| `Type(TypeError)` | Body deserialization failure | Delegated to bcp-types |
+| `Wire(WireError)` | Frame-level read failure | Delegated to bcp-wire |
+| `Io(io::Error)` | Async I/O failure | Streaming decoder read errors |
+
+## bcp-driver: DriverError
+
+Rendering errors. Raised when the driver cannot produce valid output from decoded blocks.
+
+```rust
+pub enum DriverError {
+    EmptyInput,
+    UnsupportedBlockType { block_type: BlockType },
+    InvalidContent { block_index: usize },
+}
+```
+
+| Variant | Trigger | Recovery |
+|---------|---------|----------|
+| `EmptyInput` | No renderable blocks remain after filtering | Check that blocks exist and match `include_types` |
+| `UnsupportedBlockType` | Block type cannot be rendered (reserved) | Remove or filter the block |
+| `InvalidContent` | Block body contains invalid UTF-8 | Check encoder input -- all text content must be UTF-8 |
+
+## Error Propagation Graph
+
+```
+WireError --+-> TypeError -> DecodeError
+            |                     ^
+            +-> EncodeError       |
+                     ^            |
+CompressionError ----+            |
+                                  |
+            io::Error ------------+
+```
+
+> **Error propagation path:** `DecodeError -> Vec<Block> -> DriverError`
+
+:::note
+All errors use `#[from]` for automatic `?` conversion. Wire errors propagate transparently through the stack. `CompressionError` propagates into `EncodeError`. Driver errors are independent -- they do not wrap upstream errors because the driver operates on already-decoded blocks.
+:::

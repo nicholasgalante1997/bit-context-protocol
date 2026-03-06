@@ -1,0 +1,58 @@
+name: "[bcp-docs](CI - Sanity Check)"
+
+on:
+  push:
+    paths:
+      - "website/**"
+  pull_request:
+    paths:
+      - "website/**"
+  workflow_dispatch:
+
+jobs:
+  broken-links:
+    name: Broken Links
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+      - name: Setup Bun Runtime
+        uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: latest
+      - name: Check for broken links
+        run: cd website && bunx mintlify broken-links
+
+  build:
+    name: Build
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+      - name: Setup Bun Runtime
+        uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: latest
+      - name: Build documentation site
+        run: cd website && bunx mintlify build
+
+  summary:
+    name: Pipeline Summary
+    needs:
+      - broken-links
+      - build
+    runs-on: ubuntu-latest
+    if: always()
+    steps:
+      - name: Print summary
+        run: |
+          echo "Pipeline Summary:"
+
+          if [[ "${{ needs.broken-links.result }}" == "success" && "${{ needs.build.result }}" == "success" ]]; then
+            echo "All jobs succeeded!"
+          else
+            echo "One or more jobs failed."
+            echo "broken-links: ${{ needs.broken-links.result }}"
+            echo "build: ${{ needs.build.result }}"
+            exit 1
+          fi

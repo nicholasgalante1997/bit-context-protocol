@@ -1,0 +1,28 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 800 120" width="800" height="120">
+  <defs>
+    <marker id="arrow" markerWidth="10" markerHeight="7" refX="9" refY="3.5" orient="auto">
+      <polygon points="0 0, 10 3.5, 0 7" fill="#6366F1"/>
+    </marker>
+  </defs>
+  <rect x="10" y="35" width="120" height="50" rx="8" fill="#EEF2FF" stroke="#6366F1" stroke-width="1.5"/>
+  <text x="70" y="57" font-family="system-ui, sans-serif" font-size="11" font-weight="600" fill="#4F46E5" text-anchor="middle">Tool / Agent</text>
+  <text x="70" y="72" font-family="system-ui, sans-serif" font-size="9" fill="#6366F1" text-anchor="middle">JSON manifest</text>
+  <line x1="130" y1="60" x2="170" y2="60" stroke="#6366F1" stroke-width="1.5" marker-end="url(#arrow)"/>
+  <rect x="170" y="35" width="120" height="50" rx="8" fill="#EEF2FF" stroke="#6366F1" stroke-width="1.5"/>
+  <text x="230" y="57" font-family="system-ui, sans-serif" font-size="11" font-weight="600" fill="#4F46E5" text-anchor="middle">bcp-encoder</text>
+  <text x="230" y="72" font-family="system-ui, sans-serif" font-size="9" fill="#6366F1" text-anchor="middle">Builder API</text>
+  <line x1="290" y1="60" x2="330" y2="60" stroke="#6366F1" stroke-width="1.5" marker-end="url(#arrow)"/>
+  <rect x="330" y="35" width="100" height="50" rx="8" fill="#6366F1"/>
+  <text x="380" y="57" font-family="system-ui, sans-serif" font-size="11" font-weight="700" fill="white" text-anchor="middle">.bcp binary</text>
+  <text x="380" y="72" font-family="system-ui, sans-serif" font-size="9" fill="#C7D2FE" text-anchor="middle">compact payload</text>
+  <line x1="430" y1="60" x2="470" y2="60" stroke="#6366F1" stroke-width="1.5" marker-end="url(#arrow)"/>
+  <rect x="470" y="35" width="120" height="50" rx="8" fill="#EEF2FF" stroke="#6366F1" stroke-width="1.5"/>
+  <text x="530" y="57" font-family="system-ui, sans-serif" font-size="11" font-weight="600" fill="#4F46E5" text-anchor="middle">bcp-decoder</text>
+  <text x="530" y="72" font-family="system-ui, sans-serif" font-size="9" fill="#6366F1" text-anchor="middle">Sync + Async</text>
+  <line x1="590" y1="60" x2="630" y2="60" stroke="#6366F1" stroke-width="1.5" marker-end="url(#arrow)"/>
+  <rect x="630" y="35" width="100" height="50" rx="8" fill="#EEF2FF" stroke="#6366F1" stroke-width="1.5"/>
+  <text x="680" y="57" font-family="system-ui, sans-serif" font-size="11" font-weight="600" fill="#4F46E5" text-anchor="middle">bcp-driver</text>
+  <text x="680" y="72" font-family="system-ui, sans-serif" font-size="9" fill="#6366F1" text-anchor="middle">Render modes</text>
+  <line x1="730" y1="60" x2="770" y2="60" stroke="#6366F1" stroke-width="1.5" marker-end="url(#arrow)"/>
+  <text x="790" y="65" font-family="system-ui, sans-serif" font-size="13" font-weight="700" fill="#4F46E5" text-anchor="start">LLM</text>
+</svg>

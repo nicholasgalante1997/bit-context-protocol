@@ -1,0 +1,80 @@
+---
+title: "Compression"
+description: "How BCP uses zstd compression to reduce payload size at the block level or across the entire payload."
+---
+
+BCP supports two complementary compression modes, both using [zstd](https://facebook.github.io/zstd/): **per-block compression** and **whole-payload compression**. They can be used independently but not combined in the same payload.
+
+## Per-Block Compression
+
+Per-block compression operates on individual block bodies. When enabled, the encoder checks each block independently and compresses it only if:
+
+1. The uncompressed body is **>= 256 bytes**.
+2. The compressed output is **smaller** than the original.
+
+If either condition fails, the block is written uncompressed. This makes compression **opportunistic** — small blocks and already-compact data are left alone with zero overhead.
+
+When a block is compressed, its `BlockFlags` field has the `COMPRESSED` bit (bit 1) set. The block frame's `body_len` field reflects the compressed size, while the original uncompressed size is stored in an additional LEB128 varint immediately before the compressed body.
+
+```rust
+use bcp_encoder::BcpEncoder;
+use bcp_types::enums::Lang;
+
+let large_file = std::fs::read_to_string("src/lib.rs")?;
+
+let payload = BcpEncoder::new()
+    .add_code(Lang::Rust, "lib.rs", large_file.as_bytes())
+    .with_compression()
+    .encode()?;
+```
+
+
+<Callout variant="tip">
+  Per-block compression is preferred for streaming use cases. Each block can be decompressed independently as it arrives, without buffering the entire payload.
+
+</Callout>
+
+## Whole-Payload Compression
+
+Whole-payload compression compresses **all bytes after the 8-byte file header** as a single zstd frame. This is signaled by the `COMPRESSED` bit (bit 0) in the `HeaderFlags` byte of the file header.
+
+This mode achieves better compression ratios than per-block compression because zstd can exploit cross-block redundancy (e.g., repeated import statements across multiple code blocks).
+
+```rust
+use bcp_encoder::BcpEncoder;
+use bcp_types::enums::Lang;
+
+let file_a = std::fs::read_to_string("src/a.rs")?;
+let file_b = std::fs::read_to_string("src/b.rs")?;
+
+let payload = BcpEncoder::new()
+    .add_code(Lang::Rust, "a.rs", file_a.as_bytes())
+    .add_code(Lang::Rust, "b.rs", file_b.as_bytes())
+    .compress_payload()
+    .encode()?;
+```
+
+
+<Callout variant="warning">
+  Whole-payload compression disables true streaming decode. The entire payload must be buffered before blocks can be yielded.
+
+</Callout>
+
+## Decoder Behavior
+
+The decoder handles both compression modes **transparently**. Callers do not need to know which mode was used — the decoder inspects the header flags and block flags and decompresses automatically.
+
+### Decompression Bomb Protection
+
+To prevent malicious payloads from expanding into unbounded memory, the decoder enforces a **256 MiB** limit on decompressed output. If any single block or the entire decompressed payload exceeds this limit, decoding fails with a `DecompressionBombError`.
+
+## Comparison
+
+| | Per-Block | Whole-Payload |
+|---|---|---|
+| **Granularity** | Individual blocks | Entire payload after header |
+| **Flag** | `BlockFlags::COMPRESSED` (bit 1) | `HeaderFlags::COMPRESSED` (bit 0) |
+| **Streaming** | Yes | No |
+| **Compression ratio** | Good | Better (cross-block redundancy) |
+| **Threshold** | >= 256 bytes per block | No minimum |
+| **Selective** | Only blocks that benefit | All-or-nothing |

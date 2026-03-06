@@ -1,0 +1,217 @@
+---
+title: "bcp-decoder"
+description: "Consumer-facing API for reading BCP binary payloads into typed Rust structs, with synchronous and streaming decode paths, decompression, and reference resolution."
+---
+
+The consumer-facing API. Reads BCP binary payloads and produces typed Rust structs. Provides both synchronous (buffered) and asynchronous (streaming) decode paths. Transparently handles zstd decompression and BLAKE3 content-addressed reference resolution.
+
+## Crate Info
+
+| Field | Value |
+|-------|-------|
+| Path | `crates/bcp-decoder/` |
+| Dependencies | `bcp-wire`, `bcp-types`, `thiserror`, `tokio`, `zstd` |
+| Dev Dependencies | `bcp-encoder` (round-trip tests) |
+
+## Purpose and Role in the Protocol
+
+The decoder is the inverse of the encoder and the entry point for the consumption side of the BCP pipeline:
+
+```
+.bcp binary -> bcp-decoder -> Vec<Block> -> bcp-driver -> model-ready text -> LLM
+```
+
+Two decode modes serve different use cases:
+
+- **Synchronous** (`BcpDecoder::decode`): For payloads already in memory. Simple, single-pass, returns a `DecodedPayload` with all blocks.
+- **Streaming** (`StreamingDecoder`): For large payloads or network streams. Reads blocks incrementally via `tokio::io::AsyncRead`.
+
+## Synchronous Decoder
+
+Stateless unit struct -- all state is local to the decode call.
+
+```rust
+pub struct BcpDecoder;
+
+impl BcpDecoder {
+    pub fn decode(payload: &[u8]) -> Result<DecodedPayload, DecodeError>;
+    pub fn decode_with_store(
+        payload: &[u8],
+        store: &dyn ContentStore,
+    ) -> Result<DecodedPayload, DecodeError>;
+}
+
+pub struct DecodedPayload {
+    pub header: BcpHeader,
+    pub blocks: Vec<Block>,
+}
+```
+
+### Decode Algorithm
+
+1. **Parse header** (8 bytes): Validates magic (`BCP\0`), version (major = 1), and reserved byte (`0x00`).
+
+2. **Whole-payload decompression**: If the header's `COMPRESSED` flag is set, decompress all bytes after the header with zstd (max 256 MiB).
+
+3. **Iterate block frames**: For each `BlockFrame`:
+
+```
+Read Frame       -> BlockFrame::read_from()
+Resolve Reference -> IS_REFERENCE -> store.get(hash)
+Decompress Block  -> COMPRESSED -> zstd decompress (max 16 MiB)
+Extract Summary   -> HAS_SUMMARY -> Summary::decode()
+Decode Body       -> BlockContent::decode_body()
+```
+
+4. **Validate termination**: END sentinel must be present. No trailing data allowed.
+
+### Usage
+
+```rust
+// Without content addressing
+let decoded = BcpDecoder::decode(&payload)?;
+
+// With content addressing
+let decoded = BcpDecoder::decode_with_store(&payload, store.as_ref())?;
+```
+
+## Streaming Decoder
+
+The async decoder uses a state machine to yield blocks one at a time.
+
+```rust
+pub struct StreamingDecoder<R: AsyncRead + Unpin> {
+    reader: R,
+    state: StreamState,
+    buf: Vec<u8>,
+    decompressed_payload: Option<Vec<u8>>,
+    decompressed_cursor: usize,
+    content_store: Option<Arc<dyn ContentStore>>,
+}
+
+pub enum DecoderEvent {
+    Header(BcpHeader),
+    Block(Block),
+}
+
+impl<R: AsyncRead + Unpin> StreamingDecoder<R> {
+    pub fn new(reader: R) -> Self;
+    pub fn with_content_store(self, store: Arc<dyn ContentStore>) -> Self;
+    pub async fn next(&mut self) -> Option<Result<DecoderEvent, DecodeError>>;
+}
+```
+
+### State Machine
+
+```
+ReadHeader -> ReadBlocks -> Done
+                 |    ^
+                 +----+
+             (one block per next() call)
+```
+
+- **ReadHeader**: Reads 8 bytes, validates header, yields `DecoderEvent::Header(header)`.
+- **ReadBlocks**: Each `next()` reads one block, applies decompression and reference resolution. Yields `DecoderEvent::Block(block)`.
+- **Done**: Returns `None` for all subsequent calls.
+
+:::caution
+When the header's `COMPRESSED` flag is set, the streaming decoder **buffers the entire payload** before yielding any blocks. True incremental streaming is only achieved with uncompressed or per-block compressed payloads.
+:::
+
+### Compression vs Streaming Trade-offs
+
+| Compression Mode | Streaming? | Compression Ratio |
+|------------------|------------|-------------------|
+| None | Yes | 1:1 |
+| Per-block (`compress_blocks`) | Yes | Good |
+| Whole-payload (`compress_payload`) | **No** -- full buffering | Best |
+
+:::tip
+If streaming is critical, use `BcpEncoder::compress_blocks()` (per-block) instead of `BcpEncoder::compress_payload()` (whole-payload).
+:::
+
+## Decompression Module
+
+| Item | Description |
+|------|-------------|
+| `MAX_BLOCK_DECOMPRESSED_SIZE` | 16 MiB -- per-block decompression limit |
+| `MAX_PAYLOAD_DECOMPRESSED_SIZE` | 256 MiB -- whole-payload decompression limit |
+| `decompress(data, max_size)` | Zstd decompress with bomb protection |
+
+## BlockReader
+
+The internal TLV field deserializer used by every block type's `decode_body()` method.
+
+```rust
+pub struct BlockReader<'a> {
+    buf: &'a [u8],
+    pos: usize,
+}
+```
+
+Each block type's `decode_body` creates a `BlockReader`, iterates fields with `next_field()`, and matches on `field_id`. Unknown fields are silently skipped for forward compatibility.
+
+## Forward Compatibility: Three Layers
+
+**Layer 1: Unknown Block Types** -- Captured as `BlockContent::Unknown`. No error raised. The type ID and body bytes are preserved.
+
+**Layer 2: Unknown Field IDs** -- Silently skipped via a wildcard match arm. Wire-type-aware skip.
+
+**Layer 3: Unknown Enum Values** -- `Lang::Other(byte)`, `BlockType::Unknown(id)` are preserved, not rejected.
+
+## Validation
+
+| Stage | Check | Error |
+|-------|-------|-------|
+| Header | Magic matches `BCP\0` | `InvalidHeader(InvalidMagic)` |
+| Header | Major version is 1 | `InvalidHeader(UnsupportedVersion)` |
+| Header | Reserved byte is `0x00` | `InvalidHeader(ReservedNonZero)` |
+| Decompression | Valid zstd frame | `DecompressFailed` |
+| Decompression | Output within size limit | `DecompressionBomb` |
+| Reference | Store provided | `MissingContentStore` |
+| Reference | Hash found in store | `UnresolvedReference` |
+| Frame | Body does not overflow payload | `Wire(UnexpectedEof)` |
+| Body | Required TLV fields present | `Type(MissingRequiredField)` |
+| Termination | END sentinel present | `MissingEndSentinel` |
+| Termination | No bytes after END | `TrailingData` |
+
+## DecodeError
+
+```rust
+pub enum DecodeError {
+    InvalidHeader(WireError),
+    BlockTooLarge { size: usize, offset: usize },
+    MissingField { block_type, field_name, field_id },
+    InvalidUtf8 { block_type, field_name },
+    MissingEndSentinel,
+    TrailingData { extra_bytes: usize },
+    DecompressFailed(String),
+    DecompressionBomb { actual: usize, limit: usize },
+    UnresolvedReference { hash: [u8; 32] },
+    MissingContentStore,
+    Type(TypeError),
+    Wire(WireError),
+    Io(std::io::Error),
+}
+```
+
+## Module Map
+
+```
+src/
++-- lib.rs            -> Re-exports BcpDecoder, StreamingDecoder, DecodeError, DecoderEvent
++-- decoder.rs        -> BcpDecoder (sync), decode_with_store, DecodedPayload (26 tests)
++-- streaming.rs      -> StreamingDecoder state machine (9 async tests)
++-- block_reader.rs   -> BlockReader, RawField TLV deserializer (6 tests)
++-- decompression.rs  -> decompress(), MAX_BLOCK/PAYLOAD_DECOMPRESSED_SIZE (4 tests)
++-- error.rs          -> DecodeError enum
+```
+
+## Build and Test
+
+```bash
+cargo build -p bcp-decoder
+cargo test -p bcp-decoder
+cargo clippy -p bcp-decoder -- -W clippy::pedantic
+cargo doc -p bcp-decoder --no-deps
+```

@@ -1,0 +1,135 @@
+---
+title: "Wire Format"
+description: "Binary format primitives of the Bit Context Protocol: varint encoding, file header, block frames, and type IDs."
+---
+
+The `bcp-wire` crate implements the lowest-level building blocks of the BCP binary format. Every other crate depends on these primitives. The design follows Protocol Buffers conventions: little-endian byte order, unsigned LEB128 for variable-length integers, and length-prefixed payloads.
+
+<Callout variant="tip">
+  BCP payloads always start with the magic bytes `BCP\0` (`0x42`, `0x43`, `0x50`, `0x00`).
+</Callout>
+
+## Varint Encoding (LEB128)
+
+Unsigned LEB128 encodes integers using 7 data bits per byte, with the most significant bit as a continuation flag. This is identical to the Protocol Buffers varint format.
+
+Each byte has the layout `[C|D6|D5|D4|D3|D2|D1|D0]` where `C` is the continuation bit and `D0`-`D6` are data bits.
+
+| Value | Encoded | Bytes |
+|-------|---------|-------|
+| `0` | `[0x00]` | 1 |
+| `127` | `[0x7F]` | 1 |
+| `128` | `[0x80, 0x01]` | 2 |
+| `300` | `[0xAC, 0x02]` | 2 |
+| `16384` | `[0x80, 0x80, 0x01]` | 3 |
+| `u32::MAX` | 5 bytes | 5 |
+| `u64::MAX` | 10 bytes | 10 |
+
+**Encode algorithm**: Extract lowest 7 bits. If remaining value is greater than 0, set MSB (continuation). Right-shift by 7. Repeat until value is 0.
+
+**Decode algorithm**: Read byte, extract lower 7 bits, shift into result at current offset. If MSB is set, continue. If MSB is clear, return. Error after 10 bytes.
+
+```rust
+pub fn encode_varint(value: u64, buf: &mut [u8]) -> usize;
+pub fn decode_varint(buf: &[u8]) -> Result<(u64, usize), WireError>;
+```
+
+## File Header
+
+Every BCP payload begins with a fixed 8-byte header.
+
+### Wire Layout
+
+| Offset | Size | Description |
+|--------|------|-------------|
+| `0x00` | 4 bytes | Magic number: `BCP\0` (`0x42`, `0x43`, `0x50`, `0x00`) |
+| `0x04` | 1 byte | Version major (current: 1) |
+| `0x05` | 1 byte | Version minor (current: 0) |
+| `0x06` | 1 byte | Flags bitfield |
+| `0x07` | 1 byte | Reserved (must be `0x00`) |
+
+### HeaderFlags
+
+| Bit | Name | Description |
+|-----|------|-------------|
+| 0 | `COMPRESSED` | Whole-payload zstd compression |
+| 1 | `HAS_INDEX` | Index trailer appended after END block |
+| 2-7 | Reserved | Must be 0 |
+
+```rust
+pub struct BcpHeader {
+    pub version_major: u8,
+    pub version_minor: u8,
+    pub flags: HeaderFlags,
+}
+```
+
+## Block Frame
+
+The block frame is the envelope wrapping every block's body. Blocks are concatenated sequentially after the header.
+
+### Wire Layout
+
+```
+┌──────────────────────────────────────────────────┐
+│ block_type   (varint, 1-2 bytes typically)       │
+│ block_flags  (uint8, 1 byte)                     │
+│ content_len  (varint, 1-5 bytes typically)       │
+│ body         [content_len bytes]                  │
+└──────────────────────────────────────────────────┘
+```
+
+### BlockFlags
+
+| Bit | Name | Description |
+|-----|------|-------------|
+| 0 | `HAS_SUMMARY` | Summary sub-block appended after body |
+| 1 | `COMPRESSED` | Body is zstd compressed (per-block) |
+| 2 | `IS_REFERENCE` | Body is a BLAKE3 hash, not inline data |
+| 3-7 | Reserved | Must be 0 |
+
+```rust
+pub struct BlockFrame {
+    pub block_type: u8,
+    pub flags: BlockFlags,
+    pub body: Vec<u8>,
+}
+```
+
+## Block Type IDs
+
+All known block types are defined as constants in the wire crate:
+
+| ID | Constant | Semantic |
+|----|----------|----------|
+| `0x01` | `CODE` | Source code |
+| `0x02` | `CONVERSATION` | Chat turn |
+| `0x03` | `FILE_TREE` | Directory structure |
+| `0x04` | `TOOL_RESULT` | Tool/MCP output |
+| `0x05` | `DOCUMENT` | Prose/markdown |
+| `0x06` | `STRUCTURED_DATA` | JSON/YAML/TOML/CSV |
+| `0x07` | `DIFF` | Code changes |
+| `0x08` | `ANNOTATION` | Metadata overlay |
+| `0x09` | `EMBEDDING_REF` | Vector reference |
+| `0x0A` | `IMAGE` | Image data |
+| `0xFE` | `EXTENSION` | User-defined |
+| `0xFF` | `END` | Stream sentinel |
+
+## END Sentinel
+
+The END block (type `0xFF`) signals the end of the block stream. When the decoder encounters an END block, it stops reading. The END block has no flags, length, or body on the wire -- only the type varint is read before returning.
+
+## Error Types
+
+All wire-level errors carry enough context for debugging binary payloads:
+
+```rust
+pub enum WireError {
+    VarintTooLong,                                // >10 bytes without termination
+    UnexpectedEof { offset: usize },              // Input ended prematurely
+    InvalidMagic { found: u32 },                  // Wrong magic number
+    UnsupportedVersion { major: u8, minor: u8 },  // Unknown version
+    ReservedNonZero { offset: usize, value: u8 }, // Non-zero reserved field
+    Io(std::io::Error),                           // Wrapped I/O error
+}
+```

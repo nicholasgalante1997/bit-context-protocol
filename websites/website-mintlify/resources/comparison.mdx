@@ -1,0 +1,92 @@
+---
+title: "Comparison"
+description: "How BCP compares to Protocol Buffers, MessagePack, MCP JSON, and raw Markdown."
+---
+
+## Format Comparison Matrix
+
+The following table compares BCP against the formats most commonly encountered in LLM tooling pipelines.
+
+| Feature | BCP | Protocol Buffers | MessagePack | MCP JSON | Raw Markdown |
+|---------|-----|-----------------|-------------|----------|--------------|
+| LLM-optimized | Yes | No | No | Partial | No |
+| Semantic types | Yes | Schema-defined | No | Partial | No |
+| Token budget | Yes | No | No | No | No |
+| Progressive detail | Yes | No | No | No | No |
+| Streaming | Yes | Yes | Yes | SSE | N/A |
+| Compression | Zstd | No | No | No | No |
+| Content dedup | BLAKE3 | No | No | No | No |
+| Native ingestion path | Yes | No | No | No | No |
+
+---
+
+## Feature-by-Feature Analysis
+
+### LLM-Optimized
+
+**BCP** is purpose-built for LLM context windows. Every design decision -- from block type semantics to the driver's output modes -- targets maximizing semantic density per token.
+
+**Protocol Buffers** optimize for machine-to-machine RPC with strong typing and efficient binary encoding, but they have no concept of token budgets, progressive detail, or model-specific output formatting.
+
+**MessagePack** is a general-purpose binary serialization format (a binary JSON). It is compact but carries no semantic type information -- a code block is indistinguishable from a conversation turn at the format level.
+
+**MCP JSON** (Model Context Protocol) uses JSON-RPC envelopes with structured tool definitions. It provides partial semantic structure through tool schemas but wraps everything in verbose JSON, adding significant token overhead.
+
+**Raw Markdown** is the most common format today. Every agent and tool framework constructs markdown strings with code fences, headers, and prose. It is human-readable but wastes 30-50% of tokens on structural overhead.
+
+### Semantic Types
+
+BCP defines 11 block types (CODE, CONVERSATION, FILE_TREE, TOOL_RESULT, DOCUMENT, STRUCTURED_DATA, DIFF, ANNOTATION, EMBEDDING_REF, IMAGE, EXTENSION) that capture the meaning of each context region. This lets the driver render each type optimally for the target model.
+
+Protocol Buffers have schema-defined types, but these are application-specific -- there is no shared vocabulary for "this is source code" or "this is a conversation turn." MessagePack and raw markdown have no semantic type system. MCP JSON has partial structure through tool definitions and content types but lacks the breadth of BCP's block taxonomy.
+
+### Token Budget
+
+Only BCP provides a built-in mechanism for fitting context within a token limit. The driver's two-pass budget engine scans block priorities, estimates token counts, and degrades gracefully by replacing low-priority blocks with summaries or placeholders. No other format in this comparison has any awareness of token constraints.
+
+### Progressive Detail
+
+BCP blocks can carry both a compact summary and full content. The driver selects which to emit based on the token budget and block priority. This means the model always sees a complete inventory of available context, even when some blocks are summarized.
+
+None of the other formats support this pattern natively. In protobuf or MessagePack, you would need to build a custom two-tier encoding scheme. With raw markdown, there is no mechanism to attach a summary to a code block.
+
+### Compression
+
+BCP supports Zstd compression at two levels: per-block (for individual large blocks) and whole-payload (for maximum compression ratio). A 256-byte threshold prevents compression from being counterproductive on small blocks. Zstd's dictionary compression is particularly effective for repetitive code patterns.
+
+Protocol Buffers, MessagePack, MCP JSON, and raw markdown do not include compression. Transport-level compression (e.g., gzip on HTTP) is available but is not content-aware and cannot selectively compress individual blocks.
+
+### Content Deduplication
+
+BCP uses BLAKE3 content addressing to deduplicate identical content across blocks. When the same file appears in multiple tool results, it is stored once and referenced by hash. This is especially valuable in agent workflows where the same source files are read repeatedly across turns.
+
+No other format in this comparison provides built-in content deduplication.
+
+### Native Ingestion Path
+
+BCP's wire format is designed so that, in the future, model providers could train binary token vocabularies that consume BCP blocks directly -- without the text decode step. Block types use small integer IDs that map naturally to special tokens, and every block is self-contained for independent tokenization.
+
+This is a unique design goal. Protocol Buffers, MessagePack, MCP JSON, and raw markdown all assume text-based consumption by models.
+
+---
+
+## When to Use BCP
+
+BCP is the right choice when:
+
+- **You are building an AI agent or coding assistant** that needs to pack maximum semantic content into a fixed context window.
+- **You are integrating multiple tools** (code search, LSP, test runners, file system) and want a unified binary format that preserves the semantic type of each tool's output.
+- **Token efficiency matters** -- you are hitting context window limits and need to recover the 30-50% of tokens currently wasted on structural overhead.
+- **You want progressive detail** -- the ability to show summaries of low-priority context and full content for high-priority context, all managed by a token budget engine.
+- **You need content deduplication** across repeated tool invocations in a multi-turn agent conversation.
+- **You want streaming decode** -- processing blocks incrementally as they arrive rather than buffering the entire payload.
+
+## When Not to Use BCP
+
+BCP is not the right choice when:
+
+- **You need machine-to-machine RPC.** Protocol Buffers or gRPC are mature, battle-tested solutions for service-to-service communication. BCP is not a general-purpose serialization format.
+- **You need human-readable output as the primary format.** BCP is a binary format with a text decode step. If your use case requires humans to read and edit the format directly, raw markdown or JSON is more appropriate.
+- **You are not token-constrained.** If your context window is large enough that structural overhead is not a concern, the complexity of a binary format may not be justified.
+- **You need a stable, production-grade wire format today.** BCP is in Phase 1 (reference implementation complete, specification draft). The format is subject to revision. For production systems that cannot tolerate format changes, wait for a stable v1.0 release.
+- **You need broad language support immediately.** The reference implementation is in Rust. TypeScript bindings are planned for Phase 2 but not yet available.

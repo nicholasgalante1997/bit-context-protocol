@@ -1,0 +1,246 @@
+---
+title: "bcp-tests"
+description: "Golden file test suite, snapshot tests, round-trip byte-integrity tests, budget behavior tests, token savings benchmarks, and criterion throughput benchmarks for the BCP stack."
+---
+
+The conformance backbone of the BCP PoC. Pre-built binary fixtures, insta snapshot tests for all three render modes, round-trip byte-integrity tests, budget behavior tests, a token savings benchmark, and criterion throughput benchmarks -- all in one dedicated test crate.
+
+## Crate Info
+
+| Field | Value |
+|-------|-------|
+| Path | `crates/bcp-tests/` |
+| Dependencies | `bcp-encoder`, `bcp-decoder`, `bcp-driver`, `bcp-types`, `insta`, `criterion`, `hex`, `blake3` |
+| Generator | `cargo run --bin generate_golden -p bcp-tests` |
+
+## Purpose
+
+`bcp-tests` is the integration testing harness for the entire BCP stack. It exercises every crate end-to-end -- encoding, wire format, decoding, rendering, and token estimation -- from a single test runner.
+
+The crate has three distinct responsibilities:
+
+- **Golden Fixture Generator**: Binary that writes `.bcp` fixtures to `tests/golden/`
+- **Snapshot Tests (insta)**: Read `.bcp` file, decode + render, compare vs `.snap` files
+- **Benchmarks (criterion)**: Throughput encode/decode/estimate measurements
+
+## Golden File Fixtures
+
+Fixtures live in `tests/golden/`. Each fixture directory contains a `manifest.json` (human-readable description) and a `payload.bcp` (binary, committed).
+
+```
+tests/golden/
++-- simple_code/               Single Rust CODE block
++-- conversation/              USER + ASSISTANT turns
++-- mixed_blocks/              CODE + CONVERSATION + TOOL_RESULT + FILE_TREE
++-- with_summaries/            CODE + TOOL_RESULT with summary sub-blocks
++-- compressed_blocks/         Per-block zstd compression
++-- compressed_payload/        Whole-payload zstd compression
++-- content_addressed/         Two identical CODE blocks deduplicated via BLAKE3
+|   +-- content_store.json     Hash -> content mapping
++-- budget_constrained/        CRITICAL + NORMAL + BACKGROUND priorities
++-- all_block_types/           One of each of the 11 semantic block types
++-- edge_cases/
+    +-- empty_content/         CODE block with zero-length content field
+    +-- large_varint/          CODE block with 16 KiB content (3-byte LEB128 varint)
+    +-- unknown_block_type/    Handcrafted: type_id=0x42, body=b"hello"
+    +-- trailing_data/         Valid payload + 4 extra bytes after END sentinel
+```
+
+### Regenerating Fixtures
+
+Fixtures are committed to the repository and only need to be regenerated when the wire format changes:
+
+```bash
+cargo run --bin generate_golden -p bcp-tests
+git diff tests/golden/
+```
+
+:::note
+The generator uses `BcpEncoder` for semantic fixtures and hand-crafts bytes for `unknown_block_type` and `trailing_data` using the wire-layer `BlockFrame` API.
+:::
+
+## Test Files
+
+### roundtrip.rs -- 16 tests
+
+Verifies encode -> decode -> encode produces byte-identical output for all 11 block types, plus semantic equivalence for compressed payloads.
+
+| Test | Block Type / Invariant |
+|------|------------------------|
+| `roundtrip_code_block` | CODE (no line range) |
+| `roundtrip_code_range` | CODE with line_start + line_end |
+| `roundtrip_conversation` | CONVERSATION (no tool_call_id) |
+| `roundtrip_conversation_tool` | CONVERSATION with tool_call_id |
+| `roundtrip_file_tree` | FILE_TREE with nested directory entries |
+| `roundtrip_tool_result` | TOOL_RESULT (Status::Ok) |
+| `roundtrip_document` | DOCUMENT (FormatHint::Markdown) |
+| `roundtrip_structured_data` | STRUCTURED_DATA (DataFormat::Json) |
+| `roundtrip_diff` | DIFF with one DiffHunk |
+| `roundtrip_annotation` | ANNOTATION block |
+| `roundtrip_embedding_ref` | EMBEDDING_REF with 32-byte source_hash |
+| `roundtrip_image` | IMAGE (MediaType::Png) |
+| `roundtrip_extension` | EXTENSION with namespace + type_name |
+| `roundtrip_block_with_summary` | CODE + HAS_SUMMARY flag set |
+| `roundtrip_compressed_blocks` | Per-block zstd: semantic equivalence |
+| `roundtrip_compressed_payload` | Whole-payload zstd: semantic equivalence |
+
+:::note[Info]
+Byte-identical assertions hold for uncompressed payloads. Compressed payloads compare decoded content only (the `COMPRESSED` flag is a storage hint, not semantic content).
+:::
+
+### conformance.rs -- 27 tests
+
+Snapshot tests using `insta`. Each test reads a golden `.bcp` file, decodes it, renders it in one output mode, and compares against a committed `.snap` file.
+
+| Fixture | XML | Markdown | Minimal |
+|---------|-----|----------|---------|
+| simple_code | Yes | Yes | Yes |
+| conversation | Yes | Yes | Yes |
+| mixed_blocks | Yes | Yes | Yes |
+| with_summaries | Yes | Yes | Yes |
+| compressed_blocks | Yes | Yes | Yes |
+| compressed_payload | Yes | Yes | Yes |
+| content_addressed | Yes | Yes | Yes |
+| budget_constrained (500t) | Yes | -- | Yes |
+| budget_constrained (200t) | Yes | -- | -- |
+| all_block_types | Yes | Yes | Yes |
+
+**Insta snapshot workflow:**
+
+```bash
+# First run: generates .snap.new pending files, tests fail
+cargo test -p bcp-tests --test conformance
+
+# Review and approve each snapshot interactively
+cargo insta review
+
+# Subsequent runs compare against committed .snap files
+cargo test -p bcp-tests --test conformance
+```
+
+### budget.rs -- 6 tests
+
+Verifies the token budget engine's priority-based degradation rules.
+
+| Test | Invariant Verified |
+|------|--------------------|
+| `budget_critical_always_included` | CRITICAL -> Full, even over budget |
+| `budget_background_omitted_first` | BACKGROUND omitted before NORMAL/LOW |
+| `budget_no_budget_renders_all` | token_budget: None -> all blocks Full |
+| `budget_summary_used_under_pressure` | HIGH falls back to Summary, never Omit |
+| `budget_type_filter_independent` | include_types filtering before budget |
+| `budget_priority_ordering_verified` | CRITICAL present, BACKGROUND absent |
+
+### edge_cases.rs -- 6 tests
+
+| Test | Invariant Verified |
+|------|--------------------|
+| `unknown_block_type_preserved` | type_id=0x42 -> BlockContent::Unknown |
+| `unknown_block_type_reencodes_identical` | Unknown body bytes round-trip intact |
+| `empty_content_valid` | CODE with `b""` is valid |
+| `empty_content_golden` | Golden fixture decodes to 1 block |
+| `large_varint_roundtrip` | 16 KiB content -> 3-byte LEB128 varint |
+| `trailing_data_warning` | Ok or `TrailingData` with extra_bytes: 4 |
+
+### token_savings.rs -- 3 tests
+
+Benchmarks the core value proposition: BCP Minimal mode uses at least 30% fewer tokens than equivalent raw markdown.
+
+| Test | Assertion |
+|------|-----------|
+| `token_savings_vs_markdown` | HeuristicEstimator: at least 30% savings |
+| `code_aware_estimator_savings` | CodeAwareEstimator: at least 25% savings |
+| `xml_mode_vs_markdown` | XML mode vs markdown: at least 5% savings |
+
+Actual results with a representative payload:
+
+```
+Markdown tokens: 991
+Minimal tokens:  672
+Savings:         32.2%
+```
+
+## Criterion Benchmarks
+
+### benches/encode.rs
+
+| Benchmark | What It Measures |
+|-----------|------------------|
+| `encode_small` | Single 43-byte CODE block |
+| `encode_medium` | 4 heterogeneous blocks, ~4 KB content |
+| `encode_compression/no_comp` | Two CODE blocks, no compression |
+| `encode_compression/per_block` | Two CODE blocks, per-block zstd |
+| `encode_compression/whole` | Two CODE blocks, whole-payload zstd |
+| `encode_throughput/1kb` | Throughput (MB/s) for 1 KB payload |
+| `encode_throughput/10kb` | Throughput (MB/s) for 10 KB payload |
+| `encode_throughput/100kb` | Throughput (MB/s) for 100 KB payload |
+
+### benches/decode.rs
+
+| Benchmark | What It Measures |
+|-----------|------------------|
+| `decode_small` | Single CODE block |
+| `decode_medium` | 4 blocks, ~4 KB content |
+| `decode_compression/uncomp` | Uncompressed 2-block payload |
+| `decode_compression/per_block` | Per-block zstd 2-block payload |
+| `decode_compression/whole` | Whole-payload zstd 2-block payload |
+| `decode_throughput/1kb` | Throughput (MB/s) for 1 KB payload |
+| `decode_throughput/10kb` | Throughput (MB/s) for 10 KB payload |
+| `decode_throughput/100kb` | Throughput (MB/s) for 100 KB payload |
+
+### benches/token_savings.rs
+
+| Benchmark | What It Measures |
+|-----------|------------------|
+| `estimate_heuristic` | HeuristicEstimator on rendered output |
+| `estimate_code_aware` | CodeAwareEstimator on rendered output |
+| `full_pipeline` | Encode -> Decode -> Render -> Estimate |
+
+## Module Map
+
+```
+crates/bcp-tests/
++-- Cargo.toml                  Package manifest; criterion bench targets
++-- src/
+|   +-- bin/
+|       +-- generate_golden.rs  Fixture generator binary (14 fixtures, 25 files)
++-- tests/
+|   +-- golden/                 Committed binary fixtures + manifests
+|   +-- snapshots/              Committed insta snapshot files (.snap)
+|   +-- roundtrip.rs            16 tests
+|   +-- conformance.rs          27 tests
+|   +-- budget.rs               6 tests
+|   +-- edge_cases.rs           6 tests
+|   +-- token_savings.rs        3 tests
++-- benches/
+    +-- encode.rs               8 criterion benchmarks
+    +-- decode.rs               8 criterion benchmarks
+    +-- token_savings.rs        3 criterion benchmarks
+```
+
+## Build and Test
+
+```bash
+# Generate golden fixtures (run when wire format changes)
+cargo run --bin generate_golden -p bcp-tests
+
+# Run all integration tests
+cargo test -p bcp-tests
+
+# Run specific test files
+cargo test -p bcp-tests --test roundtrip
+cargo test -p bcp-tests --test budget
+cargo test -p bcp-tests --test edge_cases
+cargo test -p bcp-tests --test token_savings -- --nocapture
+
+# Snapshot review
+cargo insta review
+
+# Criterion benchmarks
+cargo bench -p bcp-tests --bench encode
+cargo bench -p bcp-tests --bench decode
+cargo bench -p bcp-tests --bench token_savings
+
+# Full workspace validation
+cargo clippy --workspace -- -W clippy::pedantic
+```

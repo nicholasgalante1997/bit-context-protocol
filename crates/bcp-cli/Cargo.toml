@@ -2,16 +2,22 @@
 name = "bcp-cli"
 version = "0.1.0"
 edition = "2024"
+description = "CLI tool for the Bit Context Protocol — encode, decode, and inspect BCP streams"
+license = "MIT"
+repository = "https://github.com/mega-blastoise/bit-context-protocol"
+homepage = "https://bitcontextprotocol.com"
+keywords = ["bcp", "context", "cli"]
+categories = ["command-line-utilities"]
 
 [[bin]]
 name = "bcp"
 path = "src/main.rs"
 
 [dependencies]
-bcp-decoder = { path = "../bcp-decoder" }
-bcp-driver  = { path = "../bcp-driver" }
-bcp-encoder = { path = "../bcp-encoder" }
-bcp-types   = { path = "../bcp-types" }
+bcp-decoder = { path = "../bcp-decoder", version = "0.1.0" }
+bcp-driver  = { path = "../bcp-driver", version = "0.1.0" }
+bcp-encoder = { path = "../bcp-encoder", version = "0.1.0" }
+bcp-types   = { path = "../bcp-types", version = "0.1.0" }
 anyhow      = { workspace = true }
 clap        = { workspace = true }
 serde       = { version = "1", features = ["derive"] }

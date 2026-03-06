@@ -1,0 +1,129 @@
+{
+  "$schema": "https://mintlify.com/docs.json",
+  "theme": "mint",
+  "name": "Bit Context Protocol",
+  "colors": {
+    "primary": "#6366F1",
+    "light": "#818CF8",
+    "dark": "#4F46E5"
+  },
+  "favicon": "/favicon.svg",
+  "logo": {
+    "light": "/logo/light.svg",
+    "dark": "/logo/dark.svg"
+  },
+  "navigation": {
+    "tabs": [
+      {
+        "tab": "Documentation",
+        "groups": [
+          {
+            "group": "Getting Started",
+            "pages": [
+              "introduction",
+              "quickstart"
+            ]
+          },
+          {
+            "group": "Concepts",
+            "pages": [
+              "concepts/architecture",
+              "concepts/data-flow",
+              "concepts/wire-format",
+              "concepts/block-types",
+              "concepts/compression",
+              "concepts/content-addressing",
+              "concepts/token-budget",
+              "concepts/forward-compatibility"
+            ]
+          },
+          {
+            "group": "Guides",
+            "pages": [
+              "guides/encoding",
+              "guides/decoding",
+              "guides/rendering",
+              "guides/cli",
+              "guides/mcp-server",
+              "guides/manifest-format"
+            ]
+          }
+        ]
+      },
+      {
+        "tab": "API Reference",
+        "groups": [
+          {
+            "group": "Crate Reference",
+            "pages": [
+              "reference/crate-bcp-wire",
+              "reference/crate-bcp-types",
+              "reference/crate-bcp-encoder",
+              "reference/crate-bcp-decoder",
+              "reference/crate-bcp-driver",
+              "reference/crate-bcp-cli",
+              "reference/crate-bcp-tests"
+            ]
+          },
+          {
+            "group": "Reference Tables",
+            "pages": [
+              "reference/errors",
+              "reference/enums"
+            ]
+          }
+        ]
+      },
+      {
+        "tab": "Specification",
+        "groups": [
+          {
+            "group": "RFC",
+            "pages": [
+              "rfc/specification"
+            ]
+          },
+          {
+            "group": "Resources",
+            "pages": [
+              "resources/comparison",
+              "resources/token-efficiency",
+              "resources/roadmap",
+              "resources/faq"
+            ]
+          }
+        ]
+      }
+    ],
+    "global": {
+      "anchors": [
+        {
+          "anchor": "GitHub",
+          "href": "https://github.com/nicholasgalante1997/bit-context-protocol",
+          "icon": "github"
+        },
+        {
+          "anchor": "RFC",
+          "href": "/rfc/specification",
+          "icon": "file-lines"
+        }
+      ]
+    }
+  },
+  "navbar": {
+    "links": [
+      {
+        "label": "GitHub",
+        "href": "https://github.com/nicholasgalante1997/bit-context-protocol"
+      }
+    ]
+  },
+  "footer": {
+    "socials": {
+      "github": "https://github.com/nicholasgalante1997/bit-context-protocol"
+    }
+  },
+  "modeToggle": {
+    "default": "dark"
+  }
+}

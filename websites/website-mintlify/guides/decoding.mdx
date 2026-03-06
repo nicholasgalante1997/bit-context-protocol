@@ -1,0 +1,136 @@
+---
+title: "Decoding"
+description: "Parse BCP binary payloads into typed blocks with sync and streaming APIs."
+---
+
+The `bcp-decoder` crate reads BCP binary payloads and produces typed Rust structs. It provides both synchronous (buffered) and asynchronous (streaming) decode paths, with transparent zstd decompression and BLAKE3 reference resolution.
+
+## Synchronous Decoder
+
+For payloads already in memory:
+
+```rust
+use bcp_decoder::BcpDecoder;
+
+let decoded = BcpDecoder::decode(&payload)?;
+
+println!("BCP v{}.{}", decoded.header.version_major, decoded.header.version_minor);
+for block in &decoded.blocks {
+    println!("{:?}", block.content);
+}
+```
+
+The `DecodedPayload` contains the validated header and all blocks (END sentinel consumed, not included):
+
+```rust
+pub struct DecodedPayload {
+    pub header: BcpHeader,
+    pub blocks: Vec<Block>,
+}
+```
+
+### With Content Store
+
+To resolve content-addressed references, pass a `ContentStore`:
+
+```rust
+let decoded = BcpDecoder::decode_with_store(&payload, &store)?;
+```
+
+## Streaming Decoder
+
+For large payloads or network streams, use the async streaming decoder. It yields blocks one at a time without buffering the entire payload:
+
+```rust
+use bcp_decoder::{StreamingDecoder, DecoderEvent};
+
+let mut decoder = StreamingDecoder::new(reader);
+
+while let Some(event) = decoder.next().await {
+    match event? {
+        DecoderEvent::Header(h) => {
+            println!("BCP v{}.{}", h.version_major, h.version_minor);
+        }
+        DecoderEvent::Block(block) => {
+            println!("{:?}", block.content);
+        }
+    }
+}
+```
+
+<Warning>
+  Whole-payload compression (`HeaderFlags::COMPRESSED`) forces the streaming decoder to buffer everything before yielding blocks. True streaming only works with uncompressed or per-block compressed payloads.
+</Warning>
+
+### State Machine
+
+The streaming decoder uses a three-state machine:
+
+```
+ReadHeader ──▶ ReadBlocks ──▶ Done
+               (loop per block)
+```
+
+- **ReadHeader**: Reads 8 bytes, validates header, yields `DecoderEvent::Header`
+- **ReadBlocks**: Reads one block frame per `next()` call. Yields `DecoderEvent::Block` or transitions to Done on END sentinel
+- **Done**: Returns `None` (stream exhausted)
+
+## Decode Algorithm
+
+<Steps>
+  <Step title="Parse Header">
+    Validate the 8-byte header: magic number (`BCP\0`), version (major must be 1), and reserved byte (must be 0x00).
+  </Step>
+  <Step title="Decompress (if needed)">
+    If the header's `COMPRESSED` flag is set, decompress all bytes after the header with zstd (max 256 MiB).
+  </Step>
+  <Step title="Iterate Block Frames">
+    For each `BlockFrame`: decompress body if per-block COMPRESSED flag is set, resolve BLAKE3 reference if IS_REFERENCE flag is set, extract summary if HAS_SUMMARY flag is set, then deserialize via `BlockContent::decode_body()`.
+  </Step>
+  <Step title="Terminate">
+    Stop at END sentinel (type 0xFF). Verify no trailing data after END.
+  </Step>
+</Steps>
+
+## Validation
+
+The decoder validates at every structural layer:
+
+| Check | Stage | Error |
+|-------|-------|-------|
+| Magic number `BCP\0` | Header | `InvalidHeader(InvalidMagic)` |
+| Version major = 1 | Header | `InvalidHeader(UnsupportedVersion)` |
+| Reserved byte = 0x00 | Header | `InvalidHeader(ReservedNonZero)` |
+| Body length within payload | Frame | `Wire(UnexpectedEof)` |
+| Required fields present | Body | `MissingField` |
+| String fields are UTF-8 | Body | `InvalidUtf8` |
+| END sentinel present | Termination | `MissingEndSentinel` |
+| No bytes after END | Termination | `TrailingData` |
+
+## Forward Compatibility
+
+A v1.0 decoder reading a v1.1 payload will not fail:
+
+1. **Unknown block types** become `BlockContent::Unknown { type_id, body }`
+2. **Unknown TLV field IDs** are silently skipped
+3. **Unknown enum values** are preserved as `Lang::Other(u8)`, `BlockType::Unknown(u8)`, etc.
+
+<Info>
+  See [Forward Compatibility](/concepts/forward-compatibility) for a deeper explanation of BCP's schema evolution strategy.
+</Info>
+
+## Error Types
+
+```rust
+pub enum DecodeError {
+    InvalidHeader(WireError),
+    BlockTooLarge { size: usize, offset: usize },
+    MissingField { block_type: &'static str, field_name: &'static str, field_id: u64 },
+    InvalidUtf8 { block_type: &'static str, field_name: &'static str },
+    MissingEndSentinel,
+    TrailingData { extra_bytes: usize },
+    Type(TypeError),
+    Wire(WireError),
+    Io(std::io::Error),
+}
+```

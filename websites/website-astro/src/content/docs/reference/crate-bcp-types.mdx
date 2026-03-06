@@ -1,0 +1,421 @@
+---
+title: "bcp-types"
+description: "Semantic block type definitions, shared enumerations, TLV field encoding helpers, and the unified Block/BlockContent types for the Bit Context Protocol."
+---
+
+The semantic vocabulary of BCP. Defines what kinds of context exist, how they are structured, and how their fields are serialized to and from bytes.
+
+## Crate Info
+
+| Field | Value |
+|-------|-------|
+| Path | `crates/bcp-types/` |
+| Dependencies | `bcp-wire`, `thiserror` |
+| Dependents | `bcp-encoder`, `bcp-decoder` |
+
+## Purpose and Role in the Protocol
+
+The core insight of BCP is that LLM context is not unstructured text -- it has semantic types. A code file is not the same as a conversation turn, which is not the same as a tool result. The RFC (Section 4.4) defines 11 semantic block types:
+
+- **Code**: source files with language and path metadata
+- **Conversation**: chat turns with role information
+- **File trees**: directory structures for spatial awareness
+- **Tool results**: output from MCP servers, LSP, grep, test runners
+- **Documents**: prose, README files, wiki pages
+- **Structured data**: JSON configs, YAML manifests, CSV tables
+- **Diffs**: code changes with hunks for review
+- **Annotations**: metadata overlays (priority hints, summaries, tags)
+- **Embedding references**: links to vector stores
+- **Images**: visual content with alt text
+- **Extensions**: user-defined blocks for custom use cases
+
+`bcp-types` is a **pure data definition layer** -- it defines how block fields are structured and how they serialize to/from TLV-encoded bytes. The same type definitions are shared by both the encoder and decoder.
+
+## TLV Field Encoding
+
+Every block body is a sequence of TLV (Tag-Length-Value) fields:
+
+```
+field_id (varint) | wire_type (varint) | payload
+```
+
+| Wire Type | ID | Payload | Use Case |
+|-----------|-- --|---------|----------|
+| **Varint** | 0 | Single varint value | Enum bytes, integer fields, flags |
+| **Bytes** | 1 | Varint length + raw bytes | Strings, binary content, opaque data |
+| **Nested** | 2 | Varint length + nested TLV | Repeated structs (FileEntry, DiffHunk) |
+
+:::tip
+This design is deliberately protobuf-like for familiarity, but serves a different purpose. In BCP, TLV enables **forward compatibility for context blocks** -- a newer encoder can add fields that an older decoder will skip without error.
+:::
+
+### Forward Compatibility via Field Skipping
+
+```rust
+pub fn skip_field(buf: &[u8], wire_type: FieldWireType) -> Result<usize, TypeError>;
+```
+
+When the decoder encounters a `field_id` it does not recognize, it reads the `wire_type` to determine how many bytes to skip:
+- **Varint**: consume one varint value
+- **Bytes/Nested**: read the length varint, skip that many bytes
+
+A v1.1 encoder can add new fields, and a v1.0 decoder will silently skip them.
+
+### Encoding Helpers
+
+```rust
+pub fn encode_varint_field(buf: &mut Vec<u8>, field_id: u64, value: u64);
+pub fn encode_bytes_field(buf: &mut Vec<u8>, field_id: u64, data: &[u8]);
+pub fn encode_nested_field(buf: &mut Vec<u8>, field_id: u64, nested_data: &[u8]);
+```
+
+### Decoding Helpers
+
+```rust
+pub fn decode_field_header(buf: &[u8]) -> Result<(FieldHeader, usize), TypeError>;
+pub fn decode_varint_value(buf: &[u8]) -> Result<(u64, usize), TypeError>;
+pub fn decode_bytes_value(buf: &[u8]) -> Result<(&[u8], usize), TypeError>;
+pub fn skip_field(buf: &[u8], wire_type: FieldWireType) -> Result<usize, TypeError>;
+```
+
+## BlockType Enum
+
+Maps semantic types to wire byte IDs. The `Unknown(u8)` variant preserves unrecognized types for forward compatibility.
+
+```rust
+pub enum BlockType {
+    Code,           // 0x01
+    Conversation,   // 0x02
+    FileTree,       // 0x03
+    ToolResult,     // 0x04
+    Document,       // 0x05
+    StructuredData, // 0x06
+    Diff,           // 0x07
+    Annotation,     // 0x08
+    EmbeddingRef,   // 0x09
+    Image,          // 0x0A
+    Extension,      // 0xFE
+    End,            // 0xFF
+    Unknown(u8),    // Forward compatibility
+}
+
+impl BlockType {
+    pub fn wire_id(&self) -> u8;
+    pub fn from_wire_id(id: u8) -> Self;
+}
+```
+
+## Block Type Structs
+
+Each block type has a Rust struct with `encode_body()` and `decode_body()` methods. The encode/decode pattern is symmetric across all types.
+
+### CodeBlock
+
+```rust
+pub struct CodeBlock {
+    pub lang: Lang,
+    pub path: String,
+    pub content: Vec<u8>,
+    pub line_range: Option<(u32, u32)>,
+}
+```
+
+| Field ID | Wire Type | Name | Type |
+|----------|-----------|------|------|
+| 1 | Varint | lang | `Lang` enum |
+| 2 | Bytes | path | UTF-8 string |
+| 3 | Bytes | content | Raw source bytes |
+| 4 | Varint | line_start | `u32` (optional) |
+| 5 | Varint | line_end | `u32` (optional) |
+
+**Encoding** writes TLV fields in order. Optional fields are only written when present. **Decoding** iterates field headers in any order, matching on `field_id`. Unknown field IDs are skipped for forward compatibility.
+
+### ConversationBlock
+
+```rust
+pub struct ConversationBlock {
+    pub role: Role,
+    pub content: Vec<u8>,
+    pub tool_call_id: Option<String>,
+}
+```
+
+| Field ID | Wire Type | Name | Type |
+|----------|-----------|------|------|
+| 1 | Varint | role | `Role` enum |
+| 2 | Bytes | content | UTF-8 message body |
+| 3 | Bytes | tool_call_id | UTF-8 string (optional) |
+
+### FileTreeBlock
+
+```rust
+pub struct FileTreeBlock {
+    pub root_path: String,
+    pub entries: Vec<FileEntry>,
+}
+
+pub struct FileEntry {
+    pub name: String,
+    pub kind: FileEntryKind,  // File = 0, Directory = 1
+    pub size: u64,
+    pub children: Vec<FileEntry>,
+}
+```
+
+| Field ID | Wire Type | Name | Type |
+|----------|-----------|------|------|
+| 1 | Bytes | root_path | UTF-8 string |
+| 2 | Nested | entries | Repeated `FileEntry` |
+
+**FileEntry** nested fields:
+
+| Field ID | Wire Type | Name | Type |
+|----------|-----------|------|------|
+| 1 | Bytes | name | UTF-8 string |
+| 2 | Varint | kind | 0=File, 1=Directory |
+| 3 | Varint | size | `u64` bytes |
+| 4 | Nested | children | Recursive `FileEntry` |
+
+### ToolResultBlock
+
+```rust
+pub struct ToolResultBlock {
+    pub tool_name: String,
+    pub status: Status,
+    pub content: Vec<u8>,
+    pub schema_hint: Option<String>,
+}
+```
+
+| Field ID | Wire Type | Name | Type |
+|----------|-----------|------|------|
+| 1 | Bytes | tool_name | UTF-8 string |
+| 2 | Varint | status | `Status` enum |
+| 3 | Bytes | content | Tool output bytes |
+| 4 | Bytes | schema_hint | UTF-8 string (optional) |
+
+### DocumentBlock
+
+```rust
+pub struct DocumentBlock {
+    pub title: String,
+    pub content: Vec<u8>,
+    pub format_hint: FormatHint,
+}
+```
+
+| Field ID | Wire Type | Name | Type |
+|----------|-----------|------|------|
+| 1 | Bytes | title | UTF-8 string |
+| 2 | Bytes | content | Document body |
+| 3 | Varint | format_hint | `FormatHint` enum |
+
+### StructuredDataBlock
+
+```rust
+pub struct StructuredDataBlock {
+    pub format: DataFormat,
+    pub schema: Option<String>,
+    pub content: Vec<u8>,
+}
+```
+
+| Field ID | Wire Type | Name | Type |
+|----------|-----------|------|------|
+| 1 | Varint | format | `DataFormat` enum |
+| 2 | Bytes | schema | UTF-8 string (optional) |
+| 3 | Bytes | content | Raw data bytes |
+
+### DiffBlock
+
+```rust
+pub struct DiffBlock {
+    pub path: String,
+    pub hunks: Vec<DiffHunk>,
+}
+
+pub struct DiffHunk {
+    pub old_start: u32,
+    pub new_start: u32,
+    pub lines: Vec<u8>,
+}
+```
+
+| Field ID | Wire Type | Name | Type |
+|----------|-----------|------|------|
+| 1 | Bytes | path | UTF-8 file path |
+| 2 | Nested | hunks | Repeated `DiffHunk` |
+
+**DiffHunk** nested fields:
+
+| Field ID | Wire Type | Name | Type |
+|----------|-----------|------|------|
+| 1 | Varint | old_start | `u32` |
+| 2 | Varint | new_start | `u32` |
+| 3 | Bytes | lines | Unified diff content |
+
+### AnnotationBlock
+
+```rust
+pub struct AnnotationBlock {
+    pub target_block_id: u32,
+    pub kind: AnnotationKind,
+    pub value: Vec<u8>,
+}
+```
+
+| Field ID | Wire Type | Name | Type |
+|----------|-----------|------|------|
+| 1 | Varint | target_block_id | `u32` index |
+| 2 | Varint | kind | `AnnotationKind` enum |
+| 3 | Bytes | value | Payload bytes |
+
+### EmbeddingRefBlock
+
+```rust
+pub struct EmbeddingRefBlock {
+    pub vector_id: Vec<u8>,
+    pub source_hash: Vec<u8>,
+    pub model: String,
+}
+```
+
+| Field ID | Wire Type | Name | Type |
+|----------|-----------|------|------|
+| 1 | Bytes | vector_id | Opaque bytes |
+| 2 | Bytes | source_hash | BLAKE3 hash |
+| 3 | Bytes | model | UTF-8 model name |
+
+### ImageBlock
+
+```rust
+pub struct ImageBlock {
+    pub media_type: MediaType,
+    pub alt_text: String,
+    pub data: Vec<u8>,
+}
+```
+
+| Field ID | Wire Type | Name | Type |
+|----------|-----------|------|------|
+| 1 | Varint | media_type | `MediaType` enum |
+| 2 | Bytes | alt_text | UTF-8 string |
+| 3 | Bytes | data | Image bytes or URI |
+
+### ExtensionBlock
+
+```rust
+pub struct ExtensionBlock {
+    pub namespace: String,
+    pub type_name: String,
+    pub content: Vec<u8>,
+}
+```
+
+| Field ID | Wire Type | Name | Type |
+|----------|-----------|------|------|
+| 1 | Bytes | namespace | UTF-8 string |
+| 2 | Bytes | type_name | UTF-8 string |
+| 3 | Bytes | content | Opaque bytes |
+
+### EndBlock
+
+No fields. `encode_body()` returns empty `Vec`. `decode_body()` always succeeds.
+
+## Summary Sub-Block
+
+When `BlockFlags::HAS_SUMMARY` is set, the body begins with a length-prefixed summary before the TLV fields:
+
+```
+[varint] summary_len
+[bytes]  summary_text (UTF-8, summary_len bytes)
+[bytes]  remaining body (TLV fields)
+```
+
+```rust
+pub struct Summary { pub text: String }
+
+impl Summary {
+    pub fn encode(&self, buf: &mut Vec<u8>);
+    pub fn decode(buf: &[u8]) -> Result<(Self, usize), TypeError>;
+}
+```
+
+## Unified Block and BlockContent
+
+The top-level types that tie everything together:
+
+```rust
+pub struct Block {
+    pub block_type: BlockType,
+    pub flags: BlockFlags,
+    pub summary: Option<Summary>,
+    pub content: BlockContent,
+}
+
+pub enum BlockContent {
+    Code(CodeBlock),
+    Conversation(ConversationBlock),
+    FileTree(FileTreeBlock),
+    ToolResult(ToolResultBlock),
+    Document(DocumentBlock),
+    StructuredData(StructuredDataBlock),
+    Diff(DiffBlock),
+    Annotation(AnnotationBlock),
+    EmbeddingRef(EmbeddingRefBlock),
+    Image(ImageBlock),
+    Extension(ExtensionBlock),
+    End,
+    Unknown { type_id: u8, body: Vec<u8> },
+}
+```
+
+`BlockContent` provides the dispatch layer:
+- `encode_body(&self) -> Vec<u8>` matches on the variant and delegates to the inner struct
+- `decode_body(block_type, body) -> Result<Self, TypeError>` matches on the `BlockType` and calls the appropriate struct
+- Unknown block types are captured as `Unknown { type_id, body }` with raw bytes preserved for round-tripping
+
+## TypeError
+
+```rust
+pub enum TypeError {
+    MissingRequiredField { block_type: &'static str, field_name: &'static str },
+    UnknownFieldWireType { value: u64 },
+    InvalidEnumValue { enum_name: &'static str, value: u8 },
+    Wire(WireError),
+}
+```
+
+## Module Map
+
+```
+src/
++-- lib.rs              -> #![warn(clippy::pedantic)], re-exports all public types
++-- block_type.rs       -> BlockType enum + wire_id/from_wire_id
++-- enums.rs            -> wire_enum! macro + Lang, Role, Status, Priority, etc.
++-- fields.rs           -> FieldWireType, encode/decode helpers, skip_field
++-- summary.rs          -> Summary encode/decode
++-- block.rs            -> Block, BlockContent unified types
++-- code.rs             -> CodeBlock (field IDs 1-5)
++-- conversation.rs     -> ConversationBlock (field IDs 1-3)
++-- file_tree.rs        -> FileTreeBlock, FileEntry, FileEntryKind (recursive nested)
++-- tool_result.rs      -> ToolResultBlock (field IDs 1-4)
++-- document.rs         -> DocumentBlock (field IDs 1-3)
++-- structured_data.rs  -> StructuredDataBlock (field IDs 1-3)
++-- diff.rs             -> DiffBlock, DiffHunk (nested, field IDs 1-3)
++-- annotation.rs       -> AnnotationBlock (field IDs 1-3)
++-- embedding_ref.rs    -> EmbeddingRefBlock (field IDs 1-3)
++-- image.rs            -> ImageBlock (field IDs 1-3)
++-- extension.rs        -> ExtensionBlock (field IDs 1-3)
++-- end.rs              -> EndBlock (no fields, empty body)
++-- error.rs            -> TypeError enum
+```
+
+## Build and Test
+
+```bash
+cargo build -p bcp-types
+cargo test -p bcp-types
+cargo clippy -p bcp-types -- -W clippy::pedantic
+cargo doc -p bcp-types --no-deps
+```

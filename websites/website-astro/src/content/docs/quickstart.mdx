@@ -1,0 +1,142 @@
+---
+title: "Quick Start"
+description: "Build BCP and run your first encode, decode, and render in under 2 minutes."
+---
+
+import { Tabs, TabItem, Steps, Card, CardGrid, LinkCard } from '@astrojs/starlight/components';
+
+## Prerequisites
+
+BCP requires Rust 1.93.0 or later. The project uses [mise](https://mise.jdx.dev/) for tool version management.
+
+## Install and Build
+
+<Tabs>
+  <TabItem label="mise (recommended)">
+    ```bash
+    mise install          # Install pinned Rust 1.93.0
+    mise run build        # Build all crates
+    mise run test         # Run all 310 tests
+    ```
+  </TabItem>
+  <TabItem label="Cargo">
+    ```bash
+    cargo build --workspace
+    cargo test --workspace
+    ```
+  </TabItem>
+</Tabs>
+
+## Encode a Payload
+
+Create a BCP payload using the builder API:
+
+```rust
+use bcp_encoder::BcpEncoder;
+use bcp_types::enums::{Lang, Role, Status, Priority};
+
+let payload = BcpEncoder::new()
+    .add_code(Lang::Rust, "src/main.rs", b"fn main() {}")
+    .with_summary("Entry point.")?
+    .with_priority(Priority::High)?
+    .add_conversation(Role::User, b"Fix the timeout bug.")
+    .add_tool_result("ripgrep", Status::Ok, b"3 matches found.")
+    .encode()?;
+```
+
+## Decode a Payload
+
+Parse the binary payload back into typed blocks:
+
+```rust
+use bcp_decoder::BcpDecoder;
+
+let decoded = BcpDecoder::decode(&payload)?;
+for block in &decoded.blocks {
+    println!("{:?}", block.content);
+}
+```
+
+## Render to Model-Ready Text
+
+Convert decoded blocks into token-efficient text for an LLM:
+
+```rust
+use bcp_driver::{DefaultDriver, BcpDriver, DriverConfig, OutputMode, Verbosity};
+
+let driver = DefaultDriver;
+let config = DriverConfig {
+    mode: OutputMode::Xml,
+    verbosity: Verbosity::Adaptive,
+    token_budget: Some(8000),
+    ..Default::default()
+};
+let text = driver.render(&decoded.blocks, &config)?;
+```
+
+The rendered output uses structured XML tags that Claude-family models understand natively:
+
+```xml
+<context>
+<code lang="rust" path="src/main.rs" priority="high">
+fn main() {}
+</code>
+
+<tool name="ripgrep" status="ok">
+3 matches found.
+</tool>
+
+<turn role="user">Fix the timeout bug.</turn>
+</context>
+```
+
+## Use the CLI
+
+The `bcp` binary provides five commands for working with `.bcp` files without writing Rust:
+
+```bash
+# Create a .bcp file from a JSON manifest
+bcp encode manifest.json -o payload.bcp
+
+# Inspect block layout
+bcp inspect payload.bcp --show-body
+
+# Validate structural correctness
+bcp validate payload.bcp
+
+# Render as model-ready text
+bcp decode payload.bcp --mode xml
+bcp decode payload.bcp --mode minimal --budget 2000
+
+# Size and token statistics
+bcp stats payload.bcp
+```
+
+:::tip
+See the [CLI guide](/guides/cli) for detailed command reference and the [manifest format](/guides/manifest-format) for the JSON schema used by `bcp encode`.
+:::
+
+## Streaming Decode
+
+For large payloads, use the async streaming decoder:
+
+```rust
+use bcp_decoder::{StreamingDecoder, DecoderEvent};
+
+let mut decoder = StreamingDecoder::new(reader);
+while let Some(event) = decoder.next().await {
+    match event? {
+        DecoderEvent::Header(h) => println!("v{}.{}", h.version_major, h.version_minor),
+        DecoderEvent::Block(b) => println!("{:?}", b.content),
+    }
+}
+```
+
+## Next Steps
+
+<CardGrid>
+  <LinkCard title="Architecture" href="/concepts/architecture" description="Understand the crate dependency graph and system design." />
+  <LinkCard title="Block Types" href="/concepts/block-types" description="Explore all 11 semantic block types and their wire formats." />
+  <LinkCard title="Encoding Guide" href="/guides/encoding" description="Deep dive into the BcpEncoder builder API." />
+  <LinkCard title="Token Budget" href="/concepts/token-budget" description="Learn how the priority-based budget engine works." />
+</CardGrid>

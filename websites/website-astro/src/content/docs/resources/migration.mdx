@@ -1,0 +1,66 @@
+---
+title: "Migration"
+description: "From Mintlify to Astro Starlight — a look at the documentation site transition."
+---
+
+:::note
+This page documents the migration from Mintlify to Astro Starlight. For information about BCP itself, see the other pages in this documentation.
+:::
+
+## Why We Migrated
+
+The Bit Context Protocol documentation was originally built with [Mintlify](https://mintlify.com), a hosted documentation platform. While Mintlify is feature-rich, we decided to migrate to [Astro Starlight](https://starlight.astro.build) for several reasons:
+
+### Control and Independence
+
+- **No vendor lock-in**: Starlight outputs static HTML that we can host anywhere (S3 + CloudFront, Vercel, Netlify, etc.)
+- **Self-hosted**: No reliance on Mintlify's uptime or pricing changes
+- **Full customization**: We control every aspect of the build process and output
+
+### Environmental Impact
+
+Starlight generates significantly lighter static output than hosted platforms:
+- No client-side JavaScript for navigation (pure HTML)
+- No embedded analytics or tracking scripts
+- Minimal CSS bundle
+
+This aligns with our goal of building efficient, minimal tools.
+
+### Cost
+
+- **Free hosting**: Static sites can be hosted for free or at very low cost
+- **No per-page pricing**: Mintlify's pricing scales with content volume
+
+## Migration Process
+
+The migration followed a mechanical process:
+
+1. **Back up the old site** — `website/` copied to `website.bak/`
+2. **Scaffold Starlight** — `npm create astro@latest -- --template starlight`
+3. **Content migration** — All `.mdx` files copied and syntax converted
+4. **Component mapping** — Mintlify components converted to Starlight equivalents:
+
+| Mintlify | Starlight |
+|----------|-----------|
+| `<Tip>...</Tip>` | `:::tip\n...\n:::` |
+| `<Warning>...</Warning>` | `:::caution\n...\n:::` |
+| `<Note>...</Note>` | `:::note\n...\n:::` |
+| `<Info>...</Info>` | `:::note[Info]\n...\n:::` |
+| `<Tabs>/<Tab>` | `<Tabs>/<TabItem>` |
+| `<AccordionGroup>/<Accordion>` | `<details>/<summary>` |
+| `<CardGroup>` | `<CardGrid>` |
+| `<Card>` | `<Card>` or `<LinkCard>` |
+
+## Remaining Work
+
+- [ ] Verify all internal links resolve correctly
+- [ ] Update `mise.toml` website tasks for `astro` commands
+- [ ] Remove `website.bak/` after verification
+- [ ] Delete old `docs.json` from backup
+
+## Benefits After Migration
+
+- Faster builds and deployments
+- Smaller, more efficient output
+- Full control over the build pipeline
+- Ability to self-host or deploy to any static host

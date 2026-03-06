@@ -1,0 +1,114 @@
+---
+title: "MCP Server"
+description: "Use the BCP MCP Server to read, inspect, and encode .bcp files from any MCP client."
+---
+
+import { Tabs, TabItem } from '@astrojs/starlight/components';
+
+The `bcp-mcp-server` package provides an MCP (Model Context Protocol) server that exposes BCP file operations as tools. Any MCP-compatible client — Claude Desktop, Claude Code, or custom agents — can use these tools to work with `.bcp` files.
+
+## Installation
+
+The MCP server is a TypeScript package in the `packages/bcp-mcp-server/` directory:
+
+```bash
+cd packages/bcp-mcp-server
+bun install
+```
+
+## Transports
+
+The server supports two transports:
+
+<Tabs>
+  <TabItem label="stdio">
+    Standard input/output transport for direct process communication (used by Claude Desktop and Claude Code):
+
+    ```bash
+    bun run packages/bcp-mcp-server/src/index.ts --transport stdio
+    ```
+  </TabItem>
+  <TabItem label="HTTP">
+    HTTP transport for network-accessible deployments:
+
+    ```bash
+    bun run packages/bcp-mcp-server/src/index.ts --transport http --port 3001
+    ```
+  </TabItem>
+</Tabs>
+
+## Available Tools
+
+The server exposes three tools:
+
+### `read_bcp_file`
+
+Read and decode a `.bcp` file, returning rendered content as model-ready text.
+
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `path` | string | Yes | Absolute path to the .bcp file |
+| `mode` | string | No | Output render mode: `xml` (default), `markdown`, `minimal` |
+| `budget` | number | No | Token budget for adaptive rendering |
+
+### `inspect_bcp_file`
+
+Inspect a `.bcp` file and return a summary of its blocks, sizes, and structure without rendering full content.
+
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `path` | string | Yes | Absolute path to the .bcp file |
+
+### `encode_bcp_file`
+
+Encode a JSON manifest into a `.bcp` file.
+
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `manifest_path` | string | Yes | Absolute path to the JSON manifest |
+| `output_path` | string | Yes | Absolute path for the output .bcp file |
+| `compress` | boolean | No | Enable per-block zstd compression (default: false) |
+
+## Claude Desktop Configuration
+
+Add the BCP MCP server to your Claude Desktop config (`~/Library/Application Support/Claude/claude_desktop_config.json` on macOS):
+
+```json
+{
+  "mcpServers": {
+    "bcp": {
+      "command": "bun",
+      "args": [
+        "run",
+        "/path/to/bit-context-protocol/packages/bcp-mcp-server/src/index.ts",
+        "--transport",
+        "stdio"
+      ]
+    }
+  }
+}
+```
+
+## Claude Code Configuration
+
+Add to your project's `.claude/settings.json`:
+
+```json
+{
+  "mcpServers": {
+    "bcp": {
+      "command": "bun",
+      "args": [
+        "run",
+        "./packages/bcp-mcp-server/src/index.ts",
+        "--transport",
+        "stdio"
+      ]
+    }
+  }
+}
+```
+
+:::note[Info]
+The MCP server delegates to the `bcp` CLI binary for encoding and decoding operations. Make sure the CLI is built (`cargo build --workspace`) and available in your PATH.
+:::

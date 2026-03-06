@@ -1,0 +1,263 @@
+---
+title: "bcp-encoder"
+description: "Producer-facing API for constructing BCP binary payloads from typed Rust structs, with support for zstd compression and BLAKE3 content addressing."
+---
+
+The producer-facing API. Tools, agents, and MCP servers use this crate to construct BCP binary payloads from structured Rust types. Supports per-block zstd compression, whole-payload compression, and BLAKE3 content-addressed deduplication.
+
+## Crate Info
+
+| Field | Value |
+|-------|-------|
+| Path | `crates/bcp-encoder/` |
+| Dependencies | `bcp-wire`, `bcp-types`, `blake3`, `thiserror`, `zstd` |
+| Dev Dependencies | `bcp-decoder` (round-trip and cross-cutting tests) |
+
+## Purpose and Role in the Protocol
+
+The encoder sits at the beginning of the BCP data flow. The RFC (Section 5.6) specifies a builder API that allows any tool to produce BCP payloads without understanding the binary wire format details. The encoder handles:
+
+1. **Type-safe block construction** via strongly-typed `add_*` methods
+2. **TLV body serialization** via `BlockContent::encode_body()` from `bcp-types`
+3. **Summary attachment** with `with_summary`
+4. **Priority annotation** with `with_priority`
+5. **Zstd compression** (per-block and whole-payload)
+6. **BLAKE3 content addressing** for deduplication
+7. **Payload assembly** with header, blocks, and END sentinel
+
+## Usage
+
+### Basic Encoding
+
+```rust
+use bcp_encoder::BcpEncoder;
+use bcp_types::enums::{Lang, Role, Status, Priority};
+
+let payload = BcpEncoder::new()
+    .add_code(Lang::Rust, "src/main.rs", content.as_bytes())
+    .with_summary("Entry point: CLI setup and server startup.")?
+    .with_priority(Priority::High)?
+    .add_conversation(Role::User, b"Fix the timeout bug.")
+    .add_conversation(Role::Assistant, b"I'll examine the pool config...")
+    .add_tool_result("ripgrep", Status::Ok, b"3 matches found.")
+    .encode()?;
+```
+
+### With Compression
+
+```rust
+use bcp_encoder::BcpEncoder;
+use bcp_types::enums::Lang;
+
+// Per-block compression (individual large blocks)
+let payload = BcpEncoder::new()
+    .add_code(Lang::Rust, "lib.rs", large_file.as_bytes())
+    .with_compression()
+    .encode()?;
+
+// Whole-payload compression (compress everything after header)
+let payload = BcpEncoder::new()
+    .add_code(Lang::Rust, "a.rs", file_a.as_bytes())
+    .add_code(Lang::Rust, "b.rs", file_b.as_bytes())
+    .compress_payload()
+    .encode()?;
+```
+
+### With Content Addressing
+
+```rust
+use std::sync::Arc;
+use bcp_encoder::{BcpEncoder, MemoryContentStore};
+use bcp_types::enums::Lang;
+
+let store = Arc::new(MemoryContentStore::new());
+
+// Auto-dedup (duplicate blocks become references automatically)
+let payload = BcpEncoder::new()
+    .set_content_store(store.clone())
+    .auto_dedup()
+    .add_code(Lang::Rust, "a.rs", content.as_bytes())  // inline (first)
+    .add_code(Lang::Rust, "a.rs", content.as_bytes())  // reference (dup)
+    .encode()?;
+```
+
+## BcpEncoder API
+
+### Internal Structure
+
+```rust
+pub struct BcpEncoder {
+    blocks: Vec<PendingBlock>,
+    flags: HeaderFlags,
+    compress_payload: bool,
+    compress_all_blocks: bool,
+    content_store: Option<Arc<dyn ContentStore>>,
+    auto_dedup: bool,
+}
+```
+
+### Block Addition Methods
+
+All methods construct a `BlockContent` variant, wrap it in a `PendingBlock`, and return `&mut Self` for chaining.
+
+| Method | Block Type | Parameters |
+|--------|-----------|------------|
+| `add_code` | CODE (0x01) | `lang: Lang`, `path: &str`, `content: &[u8]` |
+| `add_code_range` | CODE (0x01) | + `line_start: u32`, `line_end: u32` |
+| `add_conversation` | CONVERSATION (0x02) | `role: Role`, `content: &[u8]` |
+| `add_conversation_tool` | CONVERSATION (0x02) | + `tool_call_id: &str` |
+| `add_file_tree` | FILE_TREE (0x03) | `root: &str`, `entries: Vec<FileEntry>` |
+| `add_tool_result` | TOOL_RESULT (0x04) | `name: &str`, `status: Status`, `content: &[u8]` |
+| `add_document` | DOCUMENT (0x05) | `title: &str`, `content: &[u8]`, `format_hint: FormatHint` |
+| `add_structured_data` | STRUCTURED_DATA (0x06) | `format: DataFormat`, `content: &[u8]` |
+| `add_diff` | DIFF (0x07) | `path: &str`, `hunks: Vec<DiffHunk>` |
+| `add_annotation` | ANNOTATION (0x08) | `target_block_id: u32`, `kind: AnnotationKind`, `value: &[u8]` |
+| `add_embedding_ref` | EMBEDDING_REF (0x09) | `vector_id: &[u8]`, `source_hash: &[u8]`, `model: &str` |
+| `add_image` | IMAGE (0x0A) | `media_type: MediaType`, `alt_text: &str`, `data: &[u8]` |
+| `add_extension` | EXTENSION (0xFE) | `namespace: &str`, `type_name: &str`, `content: &[u8]` |
+
+### Modifier Methods
+
+Modifiers act on the most recently added block and return `&mut Self` for chaining.
+
+| Modifier | Effect |
+|----------|--------|
+| `with_summary(summary: &str)` | Prepend length-prefixed summary to block body; set `HAS_SUMMARY` flag |
+| `with_priority(priority: Priority)` | Append a separate ANNOTATION block targeting the previous block |
+| `with_compression()` | Mark block for per-block zstd compression (if >= 256 bytes) |
+| `with_content_addressing()` | Hash body with BLAKE3, store in content store, replace with 32-byte ref |
+
+### Encoder-Level Methods
+
+| Method | Effect |
+|--------|--------|
+| `compress_blocks()` | Enable per-block compression for all blocks |
+| `compress_payload()` | Enable whole-payload zstd compression |
+| `set_content_store(Arc<dyn ContentStore>)` | Configure the BLAKE3 hash store |
+| `auto_dedup()` | Auto-detect and content-address duplicate bodies |
+
+### encode()
+
+The serialization method. Processes accumulated blocks through a multi-stage pipeline:
+
+```
+Serialize       -> encode_body() + summary
+Content Address -> BLAKE3 hash -> store -> 32-byte ref (if requested)
+Per-block Compress -> zstd compress if >= 256 bytes
+Write Frame     -> BlockFrame::write_to()
+```
+
+After all blocks and END sentinel: if `compress_payload` is set, everything after the 8-byte header is compressed as a single zstd frame.
+
+<Warning>
+Content addressing runs before compression (a 32-byte hash is below the 256-byte threshold). Whole-payload compression takes precedence over per-block. Both compression modes silently fall back to uncompressed when zstd yields no savings.
+</Warning>
+
+## Compression Module
+
+| Item | Description |
+|------|-------------|
+| `COMPRESSION_THRESHOLD` | 256 bytes -- minimum body size before compression is attempted |
+| `compress(data: &[u8]) -> Option<Vec<u8>>` | Returns `Some(compressed)` if smaller, `None` if no savings |
+| `decompress(data: &[u8], max_size: usize) -> Result<Vec<u8>, CompressionError>` | Decompression with bomb protection |
+
+Default zstd compression level: 3 (good balance of speed and ratio for code/text).
+
+## Content Store
+
+### ContentStore Trait (in bcp-types)
+
+```rust
+pub trait ContentStore: Send + Sync {
+    fn get(&self, hash: &[u8; 32]) -> Option<Vec<u8>>;
+    fn put(&self, content: &[u8]) -> [u8; 32];
+    fn contains(&self, hash: &[u8; 32]) -> bool;
+}
+```
+
+### MemoryContentStore (in bcp-encoder)
+
+In-memory implementation backed by `RwLock<HashMap<[u8; 32], Vec<u8>>>`. Uses BLAKE3 for hashing.
+
+```rust
+let store = MemoryContentStore::new();
+let hash = store.put(b"fn main() {}");
+assert!(store.contains(&hash));
+assert_eq!(store.len(), 1);
+assert_eq!(store.total_bytes(), 12);
+```
+
+## BlockWriter
+
+The internal TLV field serializer that `BlockContent::encode_body()` delegates to.
+
+```rust
+pub struct BlockWriter {
+    buf: Vec<u8>,
+}
+
+impl BlockWriter {
+    pub fn new() -> Self;
+    pub fn write_varint_field(&mut self, field_id: u64, value: u64);
+    pub fn write_bytes_field(&mut self, field_id: u64, value: &[u8]);
+    pub fn write_nested_field(&mut self, field_id: u64, nested: &[u8]);
+    pub fn finish(self) -> Vec<u8>;
+}
+```
+
+## Error Types
+
+### CompressionError
+
+```rust
+pub enum CompressionError {
+    CompressFailed(String),
+    DecompressFailed(String),
+    DecompressionBomb { actual: usize, limit: usize },
+}
+```
+
+### EncodeError
+
+```rust
+pub enum EncodeError {
+    EmptyPayload,
+    BlockTooLarge { size: usize, limit: usize },
+    NoBlockTarget { method: &'static str },
+    MissingContentStore,
+    Compression(CompressionError),
+    Wire(WireError),
+    Io(std::io::Error),
+}
+```
+
+| Variant | Trigger |
+|---------|---------|
+| `EmptyPayload` | `encode()` called with no blocks added |
+| `BlockTooLarge` | Single block body exceeds 16 MiB |
+| `NoBlockTarget` | Modifier called before any `.add_*()` |
+| `MissingContentStore` | Content addressing enabled without a store |
+| `Compression` | Zstd compression/decompression failure |
+| `Wire` | Wire-level serialization failure |
+| `Io` | I/O failure during write |
+
+## Module Map
+
+```
+src/
++-- lib.rs            -> Re-exports BcpEncoder, MemoryContentStore, EncodeError, CompressionError
++-- encoder.rs        -> BcpEncoder builder, PendingBlock, encode() pipeline (49 tests)
++-- block_writer.rs   -> BlockWriter TLV field serializer (5 tests)
++-- compression.rs    -> COMPRESSION_THRESHOLD, compress(), decompress() (7 tests)
++-- content_store.rs  -> MemoryContentStore (9 tests)
++-- error.rs          -> CompressionError, EncodeError
+```
+
+## Build and Test
+
+```bash
+cargo build -p bcp-encoder
+cargo test -p bcp-encoder
+cargo clippy -p bcp-encoder -- -W clippy::pedantic
+cargo doc -p bcp-encoder --no-deps
+```
